@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: krishiledger-api
+    env: node
+    region: singapore
+    plan: free
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: MONGODB_URI
+        sync: false          # ← you fill this in Render dashboard
+      - key: NODE_ENV
+        value: production
+      - key: FRONTEND_URL
+        sync: false          # ← your Vercel URL e.g. https://krishiledger.vercel.app
