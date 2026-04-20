@@ -3,8 +3,7 @@ const { Schema } = mongoose;
 
 // ── Plot ──────────────────────────────────────────────────────────────────────
 const plotSchema = new Schema({
-  name:  { type: String, required: true, trim: true },
-  acres: { type: Number, required: true, min: 0 },
+  name: { type: String, required: true, trim: true },
 }, { timestamps: true });
 
 // ── Crop ──────────────────────────────────────────────────────────────────────

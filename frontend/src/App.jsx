@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useFarmData } from './hooks/useFarmData';
-import { TABS, S, getId } from './utils';
+import { TABS, S, getId, GLOBAL_CSS } from './utils';
 import { Modal, ActionBtn, Spinner, ErrorBanner } from './components/UI';
 import { CropForm, ExpenseForm, LabourForm, MaterialForm, ManureForm, YieldForm } from './components/Forms';
 import { Dashboard, Crops, Expenses, Labour, Materials, Manure, Yields, Analytics, useAnalytics } from './pages/Pages';
@@ -10,22 +10,37 @@ const MODAL_TITLES = {
   material: 'Add Material', manure: 'Log Manure / Biofertilizer', yield: 'Record Yield',
 };
 
+const ADD_BTN = {
+  crops: { label: '+ Add Crop',     modal: 'crop'     },
+  expenses: { label: '+ Expense',   modal: 'expense'  },
+  labour:   { label: '+ Log Work',  modal: 'labour'   },
+  materials:{ label: '+ Add Item',  modal: 'material' },
+  manure:   { label: '+ Log',       modal: 'manure'   },
+  yields:   { label: '+ Yield',     modal: 'yield'    },
+};
+
 export default function App() {
   const { data, loading, error, actions, reload } = useFarmData();
   const analytics = useAnalytics(data);
 
-  const [tab,     setTab]   = useState('dashboard');
-  const [modal,   setModal] = useState(null);   // modal type string or null
-  const [saving,  setSaving] = useState(false);
-  const [toast,   setToast] = useState(null);   // { msg, type }
+  const [tab,    setTab]   = useState('dashboard');
+  const [modal,  setModal] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [toast,  setToast]  = useState(null);
 
-  // ── Toast helper ─────────────────────────────────────────────────────────────
+  // Inject global CSS once
+  useEffect(() => {
+    const el = document.createElement('style');
+    el.textContent = GLOBAL_CSS;
+    document.head.appendChild(el);
+    return () => document.head.removeChild(el);
+  }, []);
+
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 3000);
   };
 
-  // ── Generic save wrapper ─────────────────────────────────────────────────────
   const save = async (actionFn, successMsg) => {
     setSaving(true);
     try {
@@ -39,23 +54,24 @@ export default function App() {
     }
   };
 
-  // ── Stage change for crops ───────────────────────────────────────────────────
   const handleStageChange = (id, stage) =>
-    save(() => actions.updateCrop(id, { stage }), `Stage updated to ${stage}`);
+    save(() => actions.updateCrop(id, { stage }), `Stage → ${stage}`);
+
+  const addBtn = ADD_BTN[tab];
 
   return (
     <div style={S.app}>
-      {/* ── SIDEBAR ────────────────────────────────────────────────────────── */}
-      <aside style={S.sidebar}>
+      {/* ── SIDEBAR (desktop) ──────────────────────────────────────────────── */}
+      <aside className="fl-sidebar" style={S.sidebar}>
         <div style={S.logo}>
           <span style={{ fontSize: 26 }}>🌾</span>
           <div>
-            <div style={S.logoTitle}>KrishiLedger</div>
+            <div style={S.logoTitle}>Farm Ledger</div>
             <div style={S.logoSub}>Farm Management</div>
           </div>
         </div>
 
-        <nav style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '6px 10px', gap: 1, overflowY: 'auto' }}>
+        <nav style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '6px 10px', gap: 1 }}>
           {TABS.map(t => (
             <button key={t.id}
               style={{ ...S.navBtn, ...(tab === t.id ? S.navBtnOn : {}) }}
@@ -66,7 +82,7 @@ export default function App() {
           ))}
         </nav>
 
-        <div style={{ padding: '14px 18px', borderTop: '1px solid #1e293b', display: 'flex', gap: 16 }}>
+        <div style={{ padding: '14px 18px', borderTop: '1px solid #1e293b', display: 'flex', gap: 20 }}>
           {[['Plots', data.plots.length], ['Crops', data.crops.length]].map(([l, v]) => (
             <div key={l} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
               <span style={{ fontSize: 10, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{l}</span>
@@ -77,25 +93,28 @@ export default function App() {
       </aside>
 
       {/* ── MAIN ───────────────────────────────────────────────────────────── */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <div className="fl-main" style={S.main}>
+
         {/* Header */}
-        <header style={S.header}>
+        <header className="fl-header" style={S.header}>
           <div>
-            <h1 style={S.pageTitle}>{TABS.find(t => t.id === tab)?.icon} {TABS.find(t => t.id === tab)?.label}</h1>
-            <div style={S.breadcrumb}>Season Overview · {data.plots.length} Plots · {data.plots.reduce((s,p)=>s+p.acres,0).toFixed(1)} Acres</div>
+            <h1 className="fl-page-title" style={S.pageTitle}>
+              {TABS.find(t => t.id === tab)?.icon} {TABS.find(t => t.id === tab)?.label}
+            </h1>
+            <div style={S.breadcrumb}>
+              Farm Ledger · {data.plots.length} Plots · {data.crops.length} Crops
+            </div>
           </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            {tab === 'crops'     && <ActionBtn onClick={() => setModal('crop')}     label="+ Add Crop"    />}
-            {tab === 'expenses'  && <ActionBtn onClick={() => setModal('expense')}  label="+ Add Expense" />}
-            {tab === 'labour'    && <ActionBtn onClick={() => setModal('labour')}   label="+ Log Work"    />}
-            {tab === 'materials' && <ActionBtn onClick={() => setModal('material')} label="+ Add Item"    />}
-            {tab === 'manure'    && <ActionBtn onClick={() => setModal('manure')}   label="+ Log Manure"  />}
-            {tab === 'yields'    && <ActionBtn onClick={() => setModal('yield')}    label="+ Record Yield"/>}
-          </div>
+          {addBtn && (
+            <ActionBtn
+              onClick={() => setModal(addBtn.modal)}
+              label={addBtn.label}
+            />
+          )}
         </header>
 
         {/* Content */}
-        <div style={S.content}>
+        <div className="fl-content" style={S.content}>
           {loading && <Spinner />}
           {error   && <ErrorBanner message={error} onRetry={reload} />}
           {!loading && !error && (
@@ -113,6 +132,31 @@ export default function App() {
         </div>
       </div>
 
+      {/* ── BOTTOM NAV (mobile) ────────────────────────────────────────────── */}
+      <nav className="fl-bottom-nav" style={{
+        position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 100,
+        background: '#0a1628', borderTop: '1px solid #1e293b',
+        display: 'none', // shown by CSS on mobile
+        justifyContent: 'space-around', alignItems: 'center',
+        padding: '8px 4px',
+        paddingBottom: 'calc(8px + env(safe-area-inset-bottom))',
+      }}>
+        {TABS.map(t => (
+          <button key={t.id} onClick={() => setTab(t.id)} style={{
+            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3,
+            border: 'none', background: 'transparent', cursor: 'pointer',
+            padding: '4px 8px', borderRadius: 10,
+            color: tab === t.id ? '#4ade80' : '#475569',
+            minWidth: 0, flex: 1,
+          }}>
+            <span style={{ fontSize: 18 }}>{t.icon}</span>
+            <span style={{ fontSize: 9, fontWeight: tab === t.id ? 700 : 500, letterSpacing: '0.02em', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 44 }}>
+              {t.label.split(' ')[0]}
+            </span>
+          </button>
+        ))}
+      </nav>
+
       {/* ── MODAL ──────────────────────────────────────────────────────────── */}
       {modal && (
         <Modal title={MODAL_TITLES[modal]} onClose={() => !saving && setModal(null)}>
@@ -125,19 +169,29 @@ export default function App() {
         </Modal>
       )}
 
+      {/* ── FAB (mobile add button) ────────────────────────────────────────── */}
+      {addBtn && (
+        <button
+          className="fl-hide-mob" // hidden on desktop (header btn used instead)
+          onClick={() => setModal(addBtn.modal)}
+          style={{ display: 'none' }} // CSS overrides for mobile only
+        />
+      )}
+
       {/* ── TOAST ──────────────────────────────────────────────────────────── */}
       {toast && (
         <div style={{
-          position: 'fixed', bottom: 24, right: 24, zIndex: 300,
-          padding: '12px 20px', borderRadius: 12, fontWeight: 700, fontSize: 13,
+          position: 'fixed', bottom: 80, right: 16, zIndex: 300,
+          padding: '11px 18px', borderRadius: 12, fontWeight: 700, fontSize: 13,
           background: toast.type === 'error' ? '#7f1d1d' : '#14532d',
           color: toast.type === 'error' ? '#fca5a5' : '#4ade80',
-          border: `1px solid ${toast.type === 'error' ? '#ef4444' : '#22c55e'}44`,
+          border: `1px solid ${toast.type === 'error' ? '#ef4444' : '#22c55e'}55`,
           boxShadow: '0 8px 32px #00000066',
-          animation: 'slideIn 0.25s ease',
+          animation: 'flSlideIn 0.25s ease',
+          maxWidth: 'calc(100vw - 32px)',
         }}>
           {toast.type === 'error' ? '⚠️' : '✅'} {toast.msg}
-          <style>{`@keyframes slideIn { from { transform: translateY(20px); opacity:0; } to { transform: none; opacity:1; } }`}</style>
+          <style>{`@keyframes flSlideIn { from { transform:translateY(16px);opacity:0 } to { transform:none;opacity:1 } }`}</style>
         </div>
       )}
     </div>
