@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { KPI, Card, Badge, TwoCol } from './UI';
+import { KPI, Card, Badge, TwoCol } from '../components/UI';
 import { fmt, getId, stageColor, catColor, STAGES, EXP_CATS, S } from '../utils';
 
 // ── ANALYTICS HELPER ──────────────────────────────────────────────────────────
