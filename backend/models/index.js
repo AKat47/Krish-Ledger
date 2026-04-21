@@ -1,15 +1,10 @@
 const mongoose = require('mongoose');
 const { Schema } = mongoose;
 
-// ── Plot ──────────────────────────────────────────────────────────────────────
-const plotSchema = new Schema({
-  name: { type: String, required: true, trim: true },
-}, { timestamps: true });
-
 // ── Crop ──────────────────────────────────────────────────────────────────────
 const cropSchema = new Schema({
   name:        { type: String, required: true, trim: true },
-  plotId:      { type: Schema.Types.ObjectId, ref: 'Plot', required: true },
+  location:    { type: String, default: '', trim: true },   // free-text field name (replaces plotId)
   season:      { type: String, required: true },
   stage:       { type: String, enum: ['Sowing','Growing','Flowering','Harvest','Done'], default: 'Sowing' },
   sowDate:     { type: String },
@@ -46,7 +41,7 @@ const materialSchema = new Schema({
 
 // ── Manure / Biofertilizer Log ────────────────────────────────────────────────
 const manureSchema = new Schema({
-  plotId:   { type: Schema.Types.ObjectId, ref: 'Plot', required: true },
+  location: { type: String, default: '', trim: true },   // free-text, replaces plotId
   type:     { type: String, enum: ['FYM','Vermicompost','Green Manure','Compost','Liquid Biofertilizer'], required: true },
   quantity: { type: Number, required: true, min: 0 },
   unit:     { type: String, required: true },
@@ -64,7 +59,6 @@ const yieldSchema = new Schema({
 }, { timestamps: true });
 
 module.exports = {
-  Plot:     mongoose.model('Plot',     plotSchema),
   Crop:     mongoose.model('Crop',     cropSchema),
   Expense:  mongoose.model('Expense',  expenseSchema),
   Labour:   mongoose.model('Labour',   labourSchema),

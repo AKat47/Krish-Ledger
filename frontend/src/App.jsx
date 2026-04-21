@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useFarmData } from './hooks/useFarmData';
-import { TABS, S, getId, GLOBAL_CSS } from './utils';
+import { TABS, S, GLOBAL_CSS } from './utils';
 import { Modal, ActionBtn, Spinner, ErrorBanner } from './components/UI';
 import { CropForm, ExpenseForm, LabourForm, MaterialForm, ManureForm, YieldForm } from './components/Forms';
 import { Dashboard, Crops, Expenses, Labour, Materials, Manure, Yields, Analytics, useAnalytics } from './pages/Pages';
@@ -11,12 +11,12 @@ const MODAL_TITLES = {
 };
 
 const ADD_BTN = {
-  crops: { label: '+ Add Crop',     modal: 'crop'     },
-  expenses: { label: '+ Expense',   modal: 'expense'  },
-  labour:   { label: '+ Log Work',  modal: 'labour'   },
-  materials:{ label: '+ Add Item',  modal: 'material' },
-  manure:   { label: '+ Log',       modal: 'manure'   },
-  yields:   { label: '+ Yield',     modal: 'yield'    },
+  crops:     { label: '+ Add Crop',    modal: 'crop'     },
+  expenses:  { label: '+ Expense',     modal: 'expense'  },
+  labour:    { label: '+ Log Work',    modal: 'labour'   },
+  materials: { label: '+ Add Item',    modal: 'material' },
+  manure:    { label: '+ Log',         modal: 'manure'   },
+  yields:    { label: '+ Yield',       modal: 'yield'    },
 };
 
 export default function App() {
@@ -28,7 +28,6 @@ export default function App() {
   const [saving, setSaving] = useState(false);
   const [toast,  setToast]  = useState(null);
 
-  // Inject global CSS once
   useEffect(() => {
     const el = document.createElement('style');
     el.textContent = GLOBAL_CSS;
@@ -58,16 +57,18 @@ export default function App() {
     save(() => actions.updateCrop(id, { stage }), `Stage → ${stage}`);
 
   const addBtn = ADD_BTN[tab];
+  const currentTab = TABS.find(t => t.id === tab);
 
   return (
     <div style={S.app}>
-      {/* ── SIDEBAR (desktop) ──────────────────────────────────────────────── */}
+
+      {/* ── SIDEBAR (desktop only) ─────────────────────────────────────────── */}
       <aside className="fl-sidebar" style={S.sidebar}>
         <div style={S.logo}>
           <span style={{ fontSize: 26 }}>🌾</span>
           <div>
             <div style={S.logoTitle}>Farm Ledger</div>
-            <div style={S.logoSub}>Farm Management</div>
+            <div style={S.logoSub}>Management App</div>
           </div>
         </div>
 
@@ -82,13 +83,9 @@ export default function App() {
           ))}
         </nav>
 
-        <div style={{ padding: '14px 18px', borderTop: '1px solid #1e293b', display: 'flex', gap: 20 }}>
-          {[['Plots', data.plots.length], ['Crops', data.crops.length]].map(([l, v]) => (
-            <div key={l} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-              <span style={{ fontSize: 10, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{l}</span>
-              <strong style={{ fontSize: 13, color: '#94a3b8' }}>{v}</strong>
-            </div>
-          ))}
+        <div style={{ padding: '14px 18px', borderTop: '1px solid #1e293b' }}>
+          <div style={{ fontSize: 10, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Crops</div>
+          <strong style={{ fontSize: 18, color: '#4ade80' }}>{data.crops.length}</strong>
         </div>
       </aside>
 
@@ -97,20 +94,13 @@ export default function App() {
 
         {/* Header */}
         <header className="fl-header" style={S.header}>
-          <div>
+          <div style={{ minWidth: 0 }}>
             <h1 className="fl-page-title" style={S.pageTitle}>
-              {TABS.find(t => t.id === tab)?.icon} {TABS.find(t => t.id === tab)?.label}
+              {currentTab?.icon} {currentTab?.label}
             </h1>
-            <div style={S.breadcrumb}>
-              Farm Ledger · {data.plots.length} Plots · {data.crops.length} Crops
-            </div>
+            <div style={S.breadcrumb}>Farm Ledger · {data.crops.length} Crops</div>
           </div>
-          {addBtn && (
-            <ActionBtn
-              onClick={() => setModal(addBtn.modal)}
-              label={addBtn.label}
-            />
-          )}
+          {addBtn && <ActionBtn onClick={() => setModal(addBtn.modal)} label={addBtn.label} />}
         </header>
 
         {/* Content */}
@@ -136,21 +126,21 @@ export default function App() {
       <nav className="fl-bottom-nav" style={{
         position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 100,
         background: '#0a1628', borderTop: '1px solid #1e293b',
-        display: 'none', // shown by CSS on mobile
+        display: 'none',
         justifyContent: 'space-around', alignItems: 'center',
-        padding: '8px 4px',
-        paddingBottom: 'calc(8px + env(safe-area-inset-bottom))',
+        padding: '6px 0',
+        paddingBottom: 'calc(6px + env(safe-area-inset-bottom))',
       }}>
         {TABS.map(t => (
           <button key={t.id} onClick={() => setTab(t.id)} style={{
-            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3,
+            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
             border: 'none', background: 'transparent', cursor: 'pointer',
-            padding: '4px 8px', borderRadius: 10,
+            padding: '4px 6px', borderRadius: 8,
             color: tab === t.id ? '#4ade80' : '#475569',
-            minWidth: 0, flex: 1,
+            flex: 1, minWidth: 0,
           }}>
-            <span style={{ fontSize: 18 }}>{t.icon}</span>
-            <span style={{ fontSize: 9, fontWeight: tab === t.id ? 700 : 500, letterSpacing: '0.02em', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 44 }}>
+            <span style={{ fontSize: 17 }}>{t.icon}</span>
+            <span style={{ fontSize: 8, fontWeight: tab === t.id ? 700 : 500, letterSpacing: '0.02em', maxWidth: 44, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {t.label.split(' ')[0]}
             </span>
           </button>
@@ -164,18 +154,9 @@ export default function App() {
           {modal === 'expense'  && <ExpenseForm  data={data} loading={saving} onSave={v => save(() => actions.addExpense(v),  'Expense saved!')}  />}
           {modal === 'labour'   && <LabourForm   data={data} loading={saving} onSave={v => save(() => actions.addLabour(v),   'Labour logged!')}  />}
           {modal === 'material' && <MaterialForm             loading={saving} onSave={v => save(() => actions.addMaterial(v), 'Item added!')}     />}
-          {modal === 'manure'   && <ManureForm   data={data} loading={saving} onSave={v => save(() => actions.addManure(v),   'Manure logged!')}  />}
+          {modal === 'manure'   && <ManureForm               loading={saving} onSave={v => save(() => actions.addManure(v),   'Manure logged!')}  />}
           {modal === 'yield'    && <YieldForm    data={data} loading={saving} onSave={v => save(() => actions.addYield(v),    'Yield recorded!')} />}
         </Modal>
-      )}
-
-      {/* ── FAB (mobile add button) ────────────────────────────────────────── */}
-      {addBtn && (
-        <button
-          className="fl-hide-mob" // hidden on desktop (header btn used instead)
-          onClick={() => setModal(addBtn.modal)}
-          style={{ display: 'none' }} // CSS overrides for mobile only
-        />
       )}
 
       {/* ── TOAST ──────────────────────────────────────────────────────────── */}
@@ -191,7 +172,7 @@ export default function App() {
           maxWidth: 'calc(100vw - 32px)',
         }}>
           {toast.type === 'error' ? '⚠️' : '✅'} {toast.msg}
-          <style>{`@keyframes flSlideIn { from { transform:translateY(16px);opacity:0 } to { transform:none;opacity:1 } }`}</style>
+          <style>{`@keyframes flSlideIn{from{transform:translateY(16px);opacity:0}to{transform:none;opacity:1}}`}</style>
         </div>
       )}
     </div>

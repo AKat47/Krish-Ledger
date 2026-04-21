@@ -2,10 +2,9 @@ import { useMemo, useState } from 'react';
 import { KPI, Card, Badge } from '../components/UI';
 import { fmt, getId, stageColor, catColor, STAGES, EXP_CATS, S } from '../utils';
 
-// ── ANALYTICS (no acres / profitPerAcre removed) ──────────────────────────────
+// ── ANALYTICS ─────────────────────────────────────────────────────────────────
 export function useAnalytics(data) {
   return useMemo(() => data.crops.map(crop => {
-    const plot      = data.plots.find(p => getId(p) === (crop.plotId?._id || crop.plotId));
     const exps      = data.expenses.filter(e => (e.cropId?._id || e.cropId) === getId(crop));
     const ylds      = data.yields.filter(y => (y.cropId?._id || y.cropId) === getId(crop));
     const totalCost = exps.reduce((s, e) => s + e.amount, 0);
@@ -15,7 +14,7 @@ export function useAnalytics(data) {
     const inputs    = exps.filter(e => e.category === 'Inputs').reduce((s, e) => s + e.amount, 0);
     const irrig     = exps.filter(e => e.category === 'Irrigation').reduce((s, e) => s + e.amount, 0);
     return {
-      crop, plot, totalCost, totalRev, profit,
+      crop, totalCost, totalRev, profit,
       labourPct: totalCost ? Math.round(labour / totalCost * 100) : 0,
       inputsPct: totalCost ? Math.round(inputs / totalCost * 100) : 0,
       irrigPct:  totalCost ? Math.round(irrig  / totalCost * 100) : 0,
@@ -40,50 +39,33 @@ export function Dashboard({ analytics, data }) {
         <KPI label="Active Crops"  value={active}           accent="#a855f7" icon="🌱" />
       </div>
 
-      {/* Two-col becomes single on mobile */}
-      <div className="fl-two-col" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
-        <Card title="Crop Performance">
-          {analytics.length === 0 && <EmptyInline text="No crops yet" />}
-          {analytics.map(a => (
-            <div key={getId(a.crop)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid #0f172a' }}>
-              <div>
-                <div style={{ fontWeight: 600, color: '#e2e8f0', fontSize: 13 }}>{a.crop.name}</div>
-                <div style={{ fontSize: 11, color: '#64748b' }}>{a.plot?.name} · {a.crop.season}</div>
-              </div>
-              <div style={{ textAlign: 'right' }}>
-                <div style={{ color: a.profit >= 0 ? '#22c55e' : '#ef4444', fontWeight: 700, fontSize: 13 }}>{fmt(a.profit)}</div>
-                <div style={{ fontSize: 11, color: '#64748b' }}>Cost: {fmt(a.totalCost)}</div>
+      {/* Crop Performance full-width card */}
+      <Card title="Crop Performance">
+        {analytics.length === 0 && <EmptyInline text="No crops yet" />}
+        {analytics.map(a => (
+          <div key={getId(a.crop)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '9px 0', borderBottom: '1px solid #0f172a', gap: 8, flexWrap: 'wrap' }}>
+            <div>
+              <div style={{ fontWeight: 600, color: '#e2e8f0', fontSize: 13 }}>{a.crop.name}</div>
+              <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
+                {a.crop.location ? `${a.crop.location} · ` : ''}{a.crop.season}
               </div>
             </div>
-          ))}
-        </Card>
+            <div style={{ textAlign: 'right' }}>
+              <div style={{ color: a.profit >= 0 ? '#22c55e' : '#ef4444', fontWeight: 700, fontSize: 13 }}>{fmt(a.profit)}</div>
+              <div style={{ fontSize: 11, color: '#64748b' }}>Cost: {fmt(a.totalCost)}</div>
+            </div>
+          </div>
+        ))}
+      </Card>
 
-        <Card title="Plot Overview">
-          {data.plots.length === 0 && <EmptyInline text="No plots yet" />}
-          {data.plots.map(plot => {
-            const plotCrops = data.crops.filter(c => (c.plotId?._id || c.plotId) === getId(plot));
-            return (
-              <div key={getId(plot)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid #0f172a', gap: 8 }}>
-                <div>
-                  <div style={{ fontWeight: 600, color: '#e2e8f0', fontSize: 13 }}>{plot.name}</div>
-                  <div style={{ fontSize: 11, color: '#64748b' }}>{plotCrops.length} crop(s)</div>
-                </div>
-                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                  {plotCrops.map(c => <Badge key={getId(c)} label={c.name} color={stageColor(c.stage)} />)}
-                </div>
-              </div>
-            );
-          })}
-        </Card>
-      </div>
-
+      {/* Cost Breakdown */}
       <Card title="Cost Breakdown by Crop">
         {analytics.filter(a => a.totalCost > 0).length === 0 && <EmptyInline text="No expense data yet" />}
         {analytics.filter(a => a.totalCost > 0).map(a => (
           <div key={getId(a.crop)} style={{ marginBottom: 14 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5, flexWrap: 'wrap', gap: 4 }}>
               <span style={{ fontWeight: 600, color: '#e2e8f0', fontSize: 13 }}>{a.crop.name}</span>
-              <span style={{ color: '#64748b', fontSize: 11 }}>Labour {a.labourPct}% · Inputs {a.inputsPct}% · Irrig. {a.irrigPct}%</span>
+              <span style={{ color: '#64748b', fontSize: 11 }}>Labour {a.labourPct}% · Inputs {a.inputsPct}% · Irrig {a.irrigPct}%</span>
             </div>
             <div style={S.barTrack}>
               <div style={{ ...S.barSeg, width: `${a.labourPct}%`, background: '#fb923c' }} />
@@ -93,7 +75,7 @@ export function Dashboard({ analytics, data }) {
           </div>
         ))}
         <div style={{ display: 'flex', gap: 14, marginTop: 8 }}>
-          {[['#fb923c','Labour'],['#34d399','Inputs'],['#60a5fa','Irrigation']].map(([col, lab]) => (
+          {[['#fb923c','Labour'],['#34d399','Inputs'],['#60a5fa','Irrigation']].map(([col,lab]) => (
             <div key={lab} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: '#64748b' }}>
               <div style={{ width: 9, height: 9, borderRadius: 2, background: col }} />{lab}
             </div>
@@ -110,12 +92,11 @@ export function Crops({ data, analytics, onStageChange, onDelete }) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       {data.crops.length === 0 && <Empty message="No crops yet. Tap '+ Add Crop' to get started." />}
       {data.crops.map(crop => {
-        const plot     = data.plots.find(p => getId(p) === (crop.plotId?._id || crop.plotId));
         const a        = analytics.find(a => getId(a.crop) === getId(crop));
         const stageIdx = STAGES.indexOf(crop.stage);
         return (
           <div key={getId(crop)} style={{ background: '#0a1628', border: '1px solid #1e293b', borderRadius: 16, padding: 16 }}>
-            {/* Title row */}
+            {/* Title */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -123,26 +104,23 @@ export function Crops({ data, analytics, onStageChange, onDelete }) {
                   <Badge label={crop.stage} color={stageColor(crop.stage)} />
                 </div>
                 <div style={{ fontSize: 12, color: '#64748b', marginTop: 3 }}>
-                  {plot?.name} · {crop.season}{crop.sowDate ? ` · Sown: ${crop.sowDate}` : ''}
+                  {crop.season}{crop.location ? ` · ${crop.location}` : ''}{crop.sowDate ? ` · Sown: ${crop.sowDate}` : ''}
                 </div>
               </div>
-              {/* Stage buttons — hidden on mobile */}
-              <div className="fl-stage-btns" style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center', justifyContent: 'flex-end' }}>
+              {/* Stage pills — desktop */}
+              <div className="fl-stage-btns" style={{ display: 'flex', gap: 4, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                 {STAGES.map((s, i) => (
                   <button key={s}
-                    style={{ fontSize: 10, padding: '4px 9px', borderRadius: 999, cursor: 'pointer', fontWeight: 600, border: `1px solid ${i === stageIdx ? stageColor(s) : '#334155'}`, background: i === stageIdx ? stageColor(s) : 'transparent', color: i === stageIdx ? '#fff' : '#64748b' }}
+                    style={{ fontSize: 10, padding: '4px 9px', borderRadius: 999, cursor: 'pointer', fontWeight: 600, border: `1px solid ${i===stageIdx ? stageColor(s) : '#334155'}`, background: i===stageIdx ? stageColor(s) : 'transparent', color: i===stageIdx ? '#fff' : '#64748b' }}
                     onClick={() => onStageChange(getId(crop), s)}>{s}
                   </button>
                 ))}
               </div>
             </div>
 
-            {/* Mobile stage selector */}
-            <div style={{ marginTop: 10 }} className="fl-stage-mobile-only">
-              <select
-                value={crop.stage}
-                onChange={e => onStageChange(getId(crop), e.target.value)}
-                style={{ ...S.inp, fontSize: 13, padding: '8px 10px' }}>
+            {/* Stage dropdown — mobile */}
+            <div className="fl-stage-mobile-only" style={{ marginTop: 10, display: 'none' }}>
+              <select value={crop.stage} onChange={e => onStageChange(getId(crop), e.target.value)} style={{ ...S.inp, fontSize: 13, padding: '8px 10px' }}>
                 {STAGES.map(s => <option key={s}>{s}</option>)}
               </select>
             </div>
@@ -152,21 +130,20 @@ export function Crops({ data, analytics, onStageChange, onDelete }) {
               <div style={{ position: 'absolute', left: 4, right: 4, height: 3, background: '#1e293b', borderRadius: 2 }} />
               <div style={{ position: 'absolute', left: 4, height: 3, borderRadius: 2, background: stageColor(crop.stage), width: `${(stageIdx / (STAGES.length - 1)) * 100}%`, transition: 'width 0.4s' }} />
               {STAGES.map((s, i) => (
-                <div key={s} style={{ width: 12, height: 12, borderRadius: '50%', zIndex: 2, background: i <= stageIdx ? stageColor(crop.stage) : '#1e293b', border: `2px solid ${i <= stageIdx ? stageColor(crop.stage) : '#334155'}` }} />
+                <div key={s} style={{ width: 12, height: 12, borderRadius: '50%', zIndex: 2, background: i<=stageIdx ? stageColor(crop.stage) : '#1e293b', border: `2px solid ${i<=stageIdx ? stageColor(crop.stage) : '#334155'}` }} />
               ))}
             </div>
 
             {/* Stats */}
             <div className="fl-crop-stats" style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 8, marginTop: 8 }}>
-              {[['Cost', fmt(a?.totalCost||0),'#fb923c'],['Revenue',fmt(a?.totalRev||0),'#22c55e'],['Profit',fmt(a?.profit||0),(a?.profit||0)>=0?'#22c55e':'#ef4444'],['Yield',`${a?.yldTotal||0} qtl`,'#60a5fa']].map(([label, val, col]) => (
+              {[['Cost',fmt(a?.totalCost||0),'#fb923c'],['Revenue',fmt(a?.totalRev||0),'#22c55e'],['Profit',fmt(a?.profit||0),(a?.profit||0)>=0?'#22c55e':'#ef4444'],['Yield',`${a?.yldTotal||0} qtl`,'#60a5fa']].map(([label,val,col])=>(
                 <div key={label} style={{ background: '#0f172a', borderRadius: 9, padding: '8px 10px' }}>
-                  <div style={{ fontSize: 9, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{label}</div>
+                  <div style={{ fontSize: 9, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{label}</div>
                   <div style={{ fontWeight: 800, color: col, fontSize: 12, marginTop: 2 }}>{val}</div>
                 </div>
               ))}
             </div>
 
-            {/* Delete */}
             <div style={{ marginTop: 10, display: 'flex', justifyContent: 'flex-end' }}>
               <button style={S.delBtn} onClick={() => onDelete(getId(crop))}>Delete</button>
             </div>
@@ -186,7 +163,6 @@ export function Expenses({ data, onDelete }) {
 
   return (
     <div>
-      {/* Filter chips */}
       <div style={{ display: 'flex', gap: 7, marginBottom: 14, flexWrap: 'wrap' }}>
         {cats.map(c => (
           <button key={c} onClick={() => setFilter(c)}
@@ -197,8 +173,7 @@ export function Expenses({ data, onDelete }) {
       </div>
 
       {filtered.length === 0 ? <Empty message="No expenses recorded yet." /> : (<>
-
-        {/* Desktop table */}
+        {/* Desktop */}
         <div className="fl-tbl-desk" style={{ ...S.table, display: 'none' }}>
           <div style={{ ...S.tHead, gridTemplateColumns: deskCols }}><span>Date</span><span>Crop</span><span>Category</span><span>Note</span><span style={{textAlign:'right'}}>Amount</span><span /></div>
           {filtered.map(e => {
@@ -217,7 +192,7 @@ export function Expenses({ data, onDelete }) {
           <TotalRow cols={deskCols} total={filtered.reduce((s,e)=>s+e.amount,0)} color="#f97316" />
         </div>
 
-        {/* Mobile cards */}
+        {/* Mobile */}
         <div className="fl-tbl-mob" style={{ flexDirection: 'column', gap: 8, display: 'none' }}>
           {filtered.map(e => {
             const crop = data.crops.find(c => getId(c) === (e.cropId?._id || e.cropId));
@@ -225,11 +200,11 @@ export function Expenses({ data, onDelete }) {
               <div key={getId(e)} style={{ background: '#0a1628', border: '1px solid #1e293b', borderRadius: 12, padding: '12px 14px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                   <div>
-                    <div style={{ fontWeight: 700, color: '#e2e8f0', fontSize: 14 }}>{fmt(e.amount)}</div>
-                    <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{crop?.name || '—'} · {e.date}</div>
-                    {e.note && <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 3 }}>{e.note}</div>}
+                    <div style={{ fontWeight: 700, color: '#fb923c', fontSize: 15 }}>{fmt(e.amount)}</div>
+                    <div style={{ fontSize: 12, color: '#e2e8f0', marginTop: 2 }}>{crop?.name || '—'} · {e.date}</div>
+                    {e.note && <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>{e.note}</div>}
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
                     <Badge label={e.category} color={catColor(e.category)} />
                     <button style={S.delBtn} onClick={() => onDelete(getId(e))}>✕</button>
                   </div>
@@ -237,7 +212,7 @@ export function Expenses({ data, onDelete }) {
               </div>
             );
           })}
-          <div style={{ textAlign: 'right', padding: '10px 4px', fontWeight: 800, color: '#f97316', fontSize: 15 }}>
+          <div style={{ textAlign: 'right', padding: '8px 4px', fontWeight: 800, color: '#f97316', fontSize: 15 }}>
             Total: {fmt(filtered.reduce((s,e)=>s+e.amount,0))}
           </div>
         </div>
@@ -260,7 +235,6 @@ export function Labour({ data, onDelete }) {
       </div>
 
       {data.labourLogs.length === 0 ? <Empty message="No labour logs yet." /> : (<>
-
         {/* Desktop */}
         <div className="fl-tbl-desk" style={{ ...S.table, display: 'none' }}>
           <div style={{ ...S.tHead, gridTemplateColumns: deskCols }}><span>Date</span><span>Crop</span><span>Task</span><span style={{textAlign:'center'}}>Workers</span><span>Wage/Day</span><span style={{textAlign:'right'}}>Total</span><span /></div>
@@ -288,8 +262,8 @@ export function Labour({ data, onDelete }) {
               <div key={getId(l)} style={{ background: '#0a1628', border: '1px solid #1e293b', borderRadius: 12, padding: '12px 14px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                   <div>
-                    <div style={{ fontWeight: 700, color: '#fb923c', fontSize: 14 }}>{fmt(l.workers*l.wagePerDay)}</div>
-                    <div style={{ fontSize: 12, color: '#e2e8f0', marginTop: 2 }}>{l.task}</div>
+                    <div style={{ fontWeight: 700, color: '#fb923c', fontSize: 15 }}>{fmt(l.workers*l.wagePerDay)}</div>
+                    <div style={{ fontSize: 13, color: '#e2e8f0', marginTop: 2 }}>{l.task}</div>
                     <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>{crop?.name} · {l.date} · {l.workers} workers × {fmt(l.wagePerDay)}</div>
                   </div>
                   <button style={S.delBtn} onClick={() => onDelete(getId(l))}>✕</button>
@@ -306,11 +280,9 @@ export function Labour({ data, onDelete }) {
 // ── MATERIALS ─────────────────────────────────────────────────────────────────
 export function Materials({ data, onDelete }) {
   const deskCols = '1fr 90px 90px 100px 110px 44px';
-
   return (
     <div>
       {data.materials.length === 0 ? <Empty message="No materials in inventory yet." /> : (<>
-
         {/* Desktop */}
         <div className="fl-tbl-desk" style={{ ...S.table, display: 'none' }}>
           <div style={{ ...S.tHead, gridTemplateColumns: deskCols }}><span>Item</span><span>Category</span><span>Qty</span><span style={{textAlign:'right'}}>Cost/Unit</span><span style={{textAlign:'right'}}>Total</span><span /></div>
@@ -337,14 +309,14 @@ export function Materials({ data, onDelete }) {
                   <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{m.qty} {m.unit} · {fmt(m.costPerUnit)}/unit</div>
                   <div style={{ fontWeight: 700, color: '#34d399', fontSize: 13, marginTop: 3 }}>{fmt(m.qty*m.costPerUnit)}</div>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
                   <span style={{ ...S.badge, background: '#1e293b', color: '#94a3b8' }}>{m.category}</span>
                   <button style={S.delBtn} onClick={() => onDelete(getId(m))}>✕</button>
                 </div>
               </div>
             </div>
           ))}
-          <div style={{ textAlign: 'right', padding: '10px 4px', fontWeight: 800, color: '#34d399', fontSize: 15 }}>
+          <div style={{ textAlign: 'right', padding: '8px 4px', fontWeight: 800, color: '#34d399', fontSize: 15 }}>
             Total: {fmt(data.materials.reduce((s,m)=>s+m.qty*m.costPerUnit,0))}
           </div>
         </div>
@@ -358,27 +330,26 @@ export function Manure({ data, onDelete }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       {data.manureLogs.length === 0 && <Empty message="No manure/biofertilizer logs yet." />}
-      {data.manureLogs.map(m => {
-        const plot = data.plots.find(p => getId(p) === (m.plotId?._id || m.plotId));
-        return (
-          <div key={getId(m)} style={{ background: '#0a1628', border: '1px solid #1e293b', borderRadius: 14, padding: 16 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 700, color: '#e2e8f0', fontSize: 15 }}>🍃 {m.type}</div>
-                <div style={{ fontSize: 12, color: '#64748b', marginTop: 3 }}>{plot?.name} · {m.date}</div>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <div style={{ background: '#14532d', borderRadius: 10, padding: '6px 14px', textAlign: 'center' }}>
-                  <div style={{ fontWeight: 800, color: '#4ade80', fontSize: 16 }}>{m.quantity}</div>
-                  <div style={{ fontSize: 10, color: '#166534' }}>{m.unit}</div>
-                </div>
-                <button style={S.delBtn} onClick={() => onDelete(getId(m))}>✕</button>
+      {data.manureLogs.map(m => (
+        <div key={getId(m)} style={{ background: '#0a1628', border: '1px solid #1e293b', borderRadius: 14, padding: 16 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 700, color: '#e2e8f0', fontSize: 15 }}>🍃 {m.type}</div>
+              <div style={{ fontSize: 12, color: '#64748b', marginTop: 3 }}>
+                {m.location ? `${m.location} · ` : ''}{m.date}
               </div>
             </div>
-            {m.notes && <div style={{ marginTop: 10, fontSize: 12, color: '#94a3b8', padding: '8px 12px', background: '#0f172a', borderRadius: 8, borderLeft: '3px solid #166534' }}>📝 {m.notes}</div>}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+              <div style={{ background: '#14532d', borderRadius: 10, padding: '6px 14px', textAlign: 'center' }}>
+                <div style={{ fontWeight: 800, color: '#4ade80', fontSize: 16 }}>{m.quantity}</div>
+                <div style={{ fontSize: 10, color: '#166534' }}>{m.unit}</div>
+              </div>
+              <button style={S.delBtn} onClick={() => onDelete(getId(m))}>✕</button>
+            </div>
           </div>
-        );
-      })}
+          {m.notes && <div style={{ marginTop: 10, fontSize: 12, color: '#94a3b8', padding: '8px 12px', background: '#0f172a', borderRadius: 8, borderLeft: '3px solid #166534' }}>📝 {m.notes}</div>}
+        </div>
+      ))}
     </div>
   );
 }
@@ -386,7 +357,6 @@ export function Manure({ data, onDelete }) {
 // ── YIELDS ────────────────────────────────────────────────────────────────────
 export function Yields({ data, onDelete }) {
   const deskCols = '90px 1fr 100px 110px 110px 44px';
-
   return (
     <div>
       <div className="fl-kpi-grid" style={S.kpiGrid}>
@@ -395,7 +365,6 @@ export function Yields({ data, onDelete }) {
       </div>
 
       {data.yields.length === 0 ? <Empty message="No yields recorded yet." /> : (<>
-
         {/* Desktop */}
         <div className="fl-tbl-desk" style={{ ...S.table, display: 'none' }}>
           <div style={{ ...S.tHead, gridTemplateColumns: deskCols }}><span>Date</span><span>Crop</span><span>Quantity</span><span>Sale Price</span><span style={{textAlign:'right'}}>Revenue</span><span /></div>
@@ -422,8 +391,8 @@ export function Yields({ data, onDelete }) {
               <div key={getId(y)} style={{ background: '#0a1628', border: '1px solid #1e293b', borderRadius: 12, padding: '12px 14px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                   <div>
-                    <div style={{ fontWeight: 700, color: '#22c55e', fontSize: 14 }}>{fmt(y.quantity*y.salePrice)}</div>
-                    <div style={{ fontSize: 12, color: '#e2e8f0', marginTop: 2 }}>{crop?.name}</div>
+                    <div style={{ fontWeight: 700, color: '#22c55e', fontSize: 15 }}>{fmt(y.quantity*y.salePrice)}</div>
+                    <div style={{ fontSize: 13, color: '#e2e8f0', marginTop: 2 }}>{crop?.name}</div>
                     <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>{y.quantity} {y.unit} · {fmt(y.salePrice)}/{y.unit} · {y.date}</div>
                   </div>
                   <button style={S.delBtn} onClick={() => onDelete(getId(y))}>✕</button>
@@ -439,7 +408,7 @@ export function Yields({ data, onDelete }) {
 
 // ── ANALYTICS ─────────────────────────────────────────────────────────────────
 export function Analytics({ analytics, data }) {
-  const seasons = [...new Set(data.crops.map(c => c.season))];
+  const seasons   = [...new Set(data.crops.map(c => c.season))];
   const maxProfit = Math.max(...analytics.map(a => Math.abs(a.profit)), 1);
 
   return (
@@ -478,13 +447,14 @@ export function Analytics({ analytics, data }) {
         })}
       </Card>
 
-      <Card title="Profit Ranking by Crop">
+      <Card title="Profit Ranking">
         {analytics.length === 0 && <EmptyInline text="No data yet" />}
         {[...analytics].sort((a,b)=>b.profit-a.profit).map((a,i) => (
           <div key={getId(a.crop)} style={{ marginBottom: 14 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-              <span style={{ color: '#e2e8f0', fontSize: 13 }}>#{i+1} {a.crop.name}
-                <span style={{ color: '#64748b', fontSize: 11 }}> ({a.plot?.name})</span>
+              <span style={{ color: '#e2e8f0', fontSize: 13 }}>
+                #{i+1} {a.crop.name}
+                {a.crop.location && <span style={{ color: '#64748b', fontSize: 11 }}> · {a.crop.location}</span>}
               </span>
               <span style={{ color: a.profit>=0?'#22c55e':'#ef4444', fontWeight: 700, fontSize: 12 }}>{fmt(a.profit)}</span>
             </div>
@@ -500,11 +470,10 @@ export function Analytics({ analytics, data }) {
 
 // ── HELPERS ───────────────────────────────────────────────────────────────────
 function TotalRow({ cols, label = 'Total', total, color }) {
-  const colCount = cols.split(' ').length;
-  const empties  = Array(colCount - 2).fill(null);
+  const count = cols.split(' ').length;
   return (
     <div style={{ ...S.tRow, gridTemplateColumns: cols, borderTop: '2px solid #1e293b' }}>
-      {empties.map((_, i) => <span key={i} />)}
+      {Array(count - 2).fill(null).map((_, i) => <span key={i} />)}
       <span style={{ fontWeight: 700, color: '#e2e8f0' }}>{label}</span>
       <span style={{ textAlign: 'right', fontWeight: 800, color, fontSize: 15 }}>{fmt(total)}</span>
       <span />

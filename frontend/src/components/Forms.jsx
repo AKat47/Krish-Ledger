@@ -3,17 +3,15 @@ import { Field } from './UI';
 import { S, STAGES, SEASONS, EXP_CATS, MAT_CATS, MANURE_TYPES, getId } from '../utils';
 
 export function CropForm({ data, onSave, loading }) {
-  const [v, setV] = useState({ name: '', plotId: getId(data.plots[0]) || '', season: SEASONS[0], stage: 'Sowing', sowDate: '' });
+  const [v, setV] = useState({ name: '', location: '', season: SEASONS[0], stage: 'Sowing', sowDate: '' });
   const set = (k, val) => setV(p => ({ ...p, [k]: val }));
   return (
     <form onSubmit={e => { e.preventDefault(); v.name && onSave(v); }}>
       <Field label="Crop Name">
         <input style={S.inp} required value={v.name} onChange={e => set('name', e.target.value)} placeholder="e.g. Tomato" />
       </Field>
-      <Field label="Plot">
-        <select style={S.inp} value={v.plotId} onChange={e => set('plotId', e.target.value)}>
-          {data.plots.map(p => <option key={getId(p)} value={getId(p)}>{p.name}</option>)}
-        </select>
+      <Field label="Location (optional)">
+        <input style={S.inp} value={v.location} onChange={e => set('location', e.target.value)} placeholder="e.g. North Field, Block A…" />
       </Field>
       <Field label="Season">
         <select style={S.inp} value={v.season} onChange={e => set('season', e.target.value)}>
@@ -124,15 +122,13 @@ export function MaterialForm({ onSave, loading }) {
   );
 }
 
-export function ManureForm({ data, onSave, loading }) {
-  const [v, setV] = useState({ plotId: getId(data.plots[0]) || '', type: MANURE_TYPES[0], quantity: '', unit: 'kg', date: '', notes: '' });
+export function ManureForm({ onSave, loading }) {
+  const [v, setV] = useState({ location: '', type: MANURE_TYPES[0], quantity: '', unit: 'kg', date: '', notes: '' });
   const set = (k, val) => setV(p => ({ ...p, [k]: val }));
   return (
     <form onSubmit={e => { e.preventDefault(); v.quantity && onSave({ ...v, quantity: Number(v.quantity) }); }}>
-      <Field label="Plot">
-        <select style={S.inp} value={v.plotId} onChange={e => set('plotId', e.target.value)}>
-          {data.plots.map(p => <option key={getId(p)} value={getId(p)}>{p.name}</option>)}
-        </select>
+      <Field label="Location (optional)">
+        <input style={S.inp} value={v.location} onChange={e => set('location', e.target.value)} placeholder="e.g. North Field, Block A…" />
       </Field>
       <Field label="Type">
         <select style={S.inp} value={v.type} onChange={e => set('type', e.target.value)}>
