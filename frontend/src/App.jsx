@@ -1,8 +1,7 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useData } from './hooks/useData';
 import { SEASONS, CATS, CAT_COLORS, STAGES, C, fmt, getId, fmtDate } from './constants';
 
-// ─── GLOBAL CSS ───────────────────────────────────────────────────────────────
 const GLOBAL = `
   @import url('https://fonts.googleapis.com/css2?family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=DM+Sans:wght@300;400;500;600&display=swap');
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -12,79 +11,123 @@ const GLOBAL = `
   ::-webkit-scrollbar { display: none; }
   scrollbar-width: none;
 `;
-
-// inject once
 if (!document.getElementById('fl-global')) {
   const s = document.createElement('style');
   s.id = 'fl-global'; s.textContent = GLOBAL;
   document.head.appendChild(s);
 }
 
-// ─── APP ──────────────────────────────────────────────────────────────────────
+const PAGE_SIZE = 20;
+
+// Build month options from a list of expenses
+function buildMonthOptions(expenses) {
+  const seen = new Set();
+  const months = [];
+  // sort newest first so dropdown order is recent → older
+  const sorted = [...expenses].sort((a, b) => new Date(b.date) - new Date(a.date));
+  sorted.forEach(e => {
+    if (!e.date) return;
+    const d = new Date(e.date);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      months.push({
+        key,
+        label: d.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' }),
+      });
+    }
+  });
+  return months;
+}
+
 export default function App() {
   const { crops, expenses, loading, error, reload,
           addExpense, deleteExpense, addCrop, updateCrop, deleteCrop } = useData();
 
-  const [activeCrop,   setActiveCrop]   = useState(null);  // crop _id or null = "All"
+  const [activeCrop,   setActiveCrop]   = useState(null);
   const [catFilter,    setCatFilter]    = useState('');
+  const [monthFilter,  setMonthFilter]  = useState('');   // 'YYYY-MM' or ''
   const [showForm,     setShowForm]     = useState(false);
   const [showCropForm, setShowCropForm] = useState(false);
   const [showCropMgr,  setShowCropMgr]  = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState(null);  // { id, label }
+  const [deleteTarget, setDeleteTarget] = useState(null);
   const [toast,        setToast]        = useState('');
   const [saving,       setSaving]       = useState(false);
+  const [page,         setPage]         = useState(1);    // lazy load page counter
 
-  // Form state
-  const [form, setForm] = useState({ amount: '', desc: '', date: today(), category: CATS[0], notes: '', cropId: '' });
+  const [form,     setForm]     = useState({ amount: '', desc: '', date: today(), category: CATS[0], notes: '', cropId: '' });
   const [cropForm, setCropForm] = useState({ name: '', season: SEASONS[0], stage: 'Sowing', sowDate: '' });
 
   function today() { return new Date().toISOString().split('T')[0]; }
-
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(''), 2800); };
 
-  // ── Derived data ──
-  const allExpenses = activeCrop
-    ? expenses.filter(e => (e.cropId?._id || e.cropId) === activeCrop)
-    : expenses;
+  // ── Filtering pipeline ────────────────────────────────────────────────────
+  const byCrop = useMemo(() =>
+    activeCrop
+      ? expenses.filter(e => (e.cropId?._id || e.cropId) === activeCrop)
+      : expenses,
+  [expenses, activeCrop]);
 
-  const filtered = catFilter
-    ? allExpenses.filter(e => e.category === catFilter)
-    : allExpenses;
+  const byMonth = useMemo(() =>
+    monthFilter
+      ? byCrop.filter(e => {
+          if (!e.date) return false;
+          const d = new Date(e.date);
+          const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+          return key === monthFilter;
+        })
+      : byCrop,
+  [byCrop, monthFilter]);
 
-  const sortedEntries = [...filtered].sort((a, b) => new Date(b.date) - new Date(a.date));
+  const byCat = useMemo(() =>
+    catFilter ? byMonth.filter(e => e.category === catFilter) : byMonth,
+  [byMonth, catFilter]);
 
-  const totalForCrop  = allExpenses.reduce((s, e) => s + Number(e.amount), 0);
-  const grandTotal    = expenses.reduce((s, e) => s + Number(e.amount), 0);
+  const sortedAll = useMemo(() =>
+    [...byCat].sort((a, b) => new Date(b.date) - new Date(a.date)),
+  [byCat]);
 
-  const thisMonth = allExpenses.filter(e => {
-    const d = new Date(e.date), n = new Date();
-    return d.getMonth() === n.getMonth() && d.getFullYear() === n.getFullYear();
-  }).reduce((s, e) => s + Number(e.amount), 0);
+  // Lazy-loaded slice
+  const visibleEntries = sortedAll.slice(0, page * PAGE_SIZE);
+  const hasMore        = visibleEntries.length < sortedAll.length;
 
-  // Category breakdown
-  const catTotals = {};
-  CATS.forEach(c => catTotals[c] = 0);
-  allExpenses.forEach(e => { if (catTotals[e.category] !== undefined) catTotals[e.category] += Number(e.amount); });
-  const maxCat = Math.max(...Object.values(catTotals), 1);
+  // Reset page when filters change
+  const resetPage = () => setPage(1);
+
+  // ── Stats (on filtered set byMonth+byCrop, not byCat so they stay consistent) ──
+  const totalForView = byMonth.reduce((s, e) => s + Number(e.amount), 0);
+  const grandTotal   = expenses.reduce((s, e) => s + Number(e.amount), 0);
+  const entryCount   = byMonth.length;
+
+  // ── Category breakdown (on byCrop+byMonth only, not catFilter) ──────────────
+  const catTotals = useMemo(() => {
+    const t = {};
+    CATS.forEach(c => t[c] = 0);
+    byMonth.forEach(e => { if (t[e.category] !== undefined) t[e.category] += Number(e.amount); });
+    return t;
+  }, [byMonth]);
+  const maxCat  = Math.max(...Object.values(catTotals), 1);
   const catRows = CATS.filter(c => catTotals[c] > 0).sort((a, b) => catTotals[b] - catTotals[a]);
 
-  // ── Save expense ──
+  // ── Month options ─────────────────────────────────────────────────────────
+  const monthOptions = useMemo(() => buildMonthOptions(byCrop), [byCrop]);
+
+  // ── Handlers ──────────────────────────────────────────────────────────────
   const handleSaveExpense = async () => {
     if (!form.amount || Number(form.amount) <= 0) { showToast('Enter a valid amount'); return; }
     if (!form.desc.trim()) { showToast('Add a description'); return; }
     if (!form.date) { showToast('Pick a date'); return; }
     setSaving(true);
     try {
-      const payload = { ...form, amount: Number(form.amount), cropId: form.cropId || null };
-      await addExpense(payload);
+      await addExpense({ ...form, amount: Number(form.amount), cropId: form.cropId || null });
       setForm({ amount: '', desc: '', date: today(), category: CATS[0], notes: '', cropId: activeCrop || '' });
       setShowForm(false);
+      resetPage();
       showToast(`${fmt(form.amount)} added`);
     } catch (err) { showToast(err.message); }
     finally { setSaving(false); }
   };
 
-  // ── Save crop ──
   const handleSaveCrop = async () => {
     if (!cropForm.name.trim()) { showToast('Enter crop name'); return; }
     setSaving(true);
@@ -97,7 +140,6 @@ export default function App() {
     finally { setSaving(false); }
   };
 
-  // ── Delete confirm ──
   const confirmDelete = async () => {
     if (!deleteTarget) return;
     try {
@@ -108,14 +150,18 @@ export default function App() {
     setDeleteTarget(null);
   };
 
-  const cropName = (id) => {
-    const c = crops.find(c => getId(c) === id);
-    return c?.name || '—';
+  const cropName = (id) => crops.find(c => getId(c) === id)?.name || '—';
+
+  const switchCrop = (id) => {
+    setActiveCrop(id);
+    setCatFilter('');
+    setMonthFilter('');
+    resetPage();
   };
 
-  // ─── RENDER ────────────────────────────────────────────────────────────────
+  // ── RENDER ────────────────────────────────────────────────────────────────
   return (
-    <div style={{ fontFamily: "'DM Sans', sans-serif", background: C.bg, minHeight: '100vh', maxWidth: 480, margin: '0 auto', position: 'relative', paddingBottom: 32 }}>
+    <div style={{ fontFamily: "'DM Sans', sans-serif", background: C.bg, minHeight: '100vh', maxWidth: 480, margin: '0 auto', paddingBottom: 40 }}>
 
       {/* ── HEADER ── */}
       <div style={{ background: C.green800, padding: '18px 16px 0', position: 'sticky', top: 0, zIndex: 50 }}>
@@ -123,12 +169,11 @@ export default function App() {
           <div style={{ ...serif, color: C.green50, fontSize: 19, letterSpacing: '-0.01em' }}>
             Farm <span style={{ color: C.green200, fontStyle: 'italic' }}>Ledger</span>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ background: C.green700, color: C.green100, fontSize: 11, fontWeight: 500, padding: '4px 10px', borderRadius: 20 }}>
-              Total: {fmt(grandTotal)}
+              {fmt(grandTotal)}
             </span>
-            <button
-              onClick={() => setShowCropMgr(true)}
+            <button onClick={() => setShowCropMgr(true)}
               style={{ background: 'transparent', border: `1px solid ${C.green600}`, color: C.green200, borderRadius: 8, padding: '4px 10px', fontSize: 12, cursor: 'pointer' }}>
               Crops
             </button>
@@ -137,22 +182,11 @@ export default function App() {
 
         {/* Crop tabs */}
         <div style={{ display: 'flex', gap: 2, overflowX: 'auto', scrollbarWidth: 'none' }}>
-          <CropTab
-            label="All"
-            sub={grandTotal > 0 ? fmt(grandTotal) : ''}
-            active={activeCrop === null}
-            onClick={() => { setActiveCrop(null); setCatFilter(''); }}
-          />
+          <CropTab label="All" sub={grandTotal > 0 ? fmt(grandTotal) : ''} active={activeCrop === null} onClick={() => switchCrop(null)} />
           {crops.map(c => {
             const tot = expenses.filter(e => (e.cropId?._id || e.cropId) === getId(c)).reduce((s, e) => s + Number(e.amount), 0);
             return (
-              <CropTab
-                key={getId(c)}
-                label={c.name}
-                sub={tot > 0 ? fmt(tot) : ''}
-                active={activeCrop === getId(c)}
-                onClick={() => { setActiveCrop(getId(c)); setCatFilter(''); }}
-              />
+              <CropTab key={getId(c)} label={c.name} sub={tot > 0 ? fmt(tot) : ''} active={activeCrop === getId(c)} onClick={() => switchCrop(getId(c))} />
             );
           })}
         </div>
@@ -160,30 +194,53 @@ export default function App() {
 
       {/* ── CONTENT ── */}
       <div style={{ padding: '14px 14px 0' }}>
-
         {loading && <LoadingState />}
         {error   && <ErrorState msg={error} onRetry={reload} />}
 
         {!loading && !error && (<>
 
-          {/* Summary strip */}
+          {/* ── SUMMARY STRIP ── */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 14 }}>
-            <StatCard label="Total" value={fmt(totalForCrop)} accent />
-            <StatCard label="Entries" value={allExpenses.length} />
-            <StatCard label="This month" value={fmt(thisMonth)} />
+            <StatCard label="Total" value={fmt(totalForView)} accent />
+            <StatCard label="Entries" value={entryCount} />
+            <StatCard label="Showing" value={`${visibleEntries.length} / ${sortedAll.length}`} />
           </div>
 
-          {/* Add expense button */}
+          {/* ── BREAKDOWN (now at top) ── */}
+          {catRows.length > 0 && (
+            <div style={{ background: C.surface, border: `0.5px solid ${C.border}`, borderRadius: 12, padding: '14px', marginBottom: 14 }}>
+              <div style={{ ...serif, fontSize: 13, color: C.muted, marginBottom: 12 }}>Breakdown</div>
+              {catRows.map(c => (
+                <div key={c} style={{ marginBottom: 10, cursor: 'pointer' }}
+                  onClick={() => { setCatFilter(catFilter === c ? '' : c); resetPage(); }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <span style={{ fontSize: 12, color: catFilter === c ? CAT_COLORS[c] : C.gray700, fontWeight: catFilter === c ? 600 : 400 }}>{c}</span>
+                    <span style={{ fontSize: 12, fontWeight: 500, color: CAT_COLORS[c] }}>{fmt(catTotals[c])}</span>
+                  </div>
+                  <div style={{ height: 5, background: C.gray50, borderRadius: 3, overflow: 'hidden' }}>
+                    <div style={{ height: '100%', borderRadius: 3, background: CAT_COLORS[c], width: `${Math.round(catTotals[c] / maxCat * 100)}%`, transition: 'width 0.4s', opacity: catFilter && catFilter !== c ? 0.35 : 1 }} />
+                  </div>
+                </div>
+              ))}
+              {catFilter && (
+                <button onClick={() => { setCatFilter(''); resetPage(); }}
+                  style={{ marginTop: 6, fontSize: 11, color: C.green700, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+                  ✕ Clear filter
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* ── ADD EXPENSE BUTTON ── */}
           <button onClick={() => { setForm(f => ({ ...f, cropId: activeCrop || '', date: today() })); setShowForm(v => !v); }}
             style={{ width: '100%', background: C.green700, color: C.green50, border: 'none', borderRadius: 10, padding: '13px', ...sans, fontSize: 14, fontWeight: 500, cursor: 'pointer', marginBottom: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
             {showForm ? '✕ Cancel' : '+ Add Expense'}
           </button>
 
-          {/* Add expense form */}
+          {/* ── ADD FORM ── */}
           {showForm && (
             <div style={{ background: C.surface, border: `0.5px solid ${C.borderSt}`, borderRadius: 12, padding: '14px', marginBottom: 14 }}>
               <div style={{ ...serif, fontSize: 14, color: C.green800, marginBottom: 14 }}>New Expense</div>
-
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
                 <FormField label="Amount (₹)">
                   <input style={inp} type="number" inputMode="numeric" placeholder="0" value={form.amount}
@@ -194,12 +251,10 @@ export default function App() {
                     onChange={e => setForm(f => ({ ...f, date: e.target.value }))} />
                 </FormField>
               </div>
-
               <FormField label="Description" mb={10}>
                 <input style={inp} placeholder="What was this for?" value={form.desc}
                   onChange={e => setForm(f => ({ ...f, desc: e.target.value }))} />
               </FormField>
-
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
                 <FormField label="Category">
                   <select style={inp} value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))}>
@@ -213,12 +268,10 @@ export default function App() {
                   </select>
                 </FormField>
               </div>
-
               <FormField label="Notes (optional)" mb={14}>
                 <input style={inp} placeholder="Any additional notes…" value={form.notes}
                   onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} />
               </FormField>
-
               <div style={{ display: 'flex', gap: 8 }}>
                 <button onClick={handleSaveExpense} disabled={saving}
                   style={{ flex: 1, background: C.green700, color: '#fff', border: 'none', borderRadius: 8, padding: 11, ...sans, fontSize: 14, fontWeight: 500, cursor: 'pointer', opacity: saving ? 0.6 : 1 }}>
@@ -232,51 +285,83 @@ export default function App() {
             </div>
           )}
 
-          {/* Category filter */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-            <div style={{ ...serif, fontSize: 13, color: C.muted }}>
-              {activeCrop ? cropName(activeCrop) : 'All crops'}{catFilter ? ` · ${catFilter}` : ' · all entries'}
-            </div>
-            <select value={catFilter} onChange={e => setCatFilter(e.target.value)}
-              style={{ ...sans, fontSize: 12, border: `0.5px solid ${C.border}`, borderRadius: 8, padding: '5px 9px', background: C.surface, color: C.muted, cursor: 'pointer', outline: 'none' }}>
+          {/* ── FILTER BAR: month + category ── */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+            {/* Month dropdown */}
+            <select
+              value={monthFilter}
+              onChange={e => { setMonthFilter(e.target.value); resetPage(); }}
+              style={{ ...filterSelect, flex: 1 }}>
+              <option value="">All months</option>
+              {monthOptions.map(m => (
+                <option key={m.key} value={m.key}>{m.label}</option>
+              ))}
+            </select>
+
+            {/* Category dropdown */}
+            <select
+              value={catFilter}
+              onChange={e => { setCatFilter(e.target.value); resetPage(); }}
+              style={{ ...filterSelect, flex: 1 }}>
               <option value="">All categories</option>
               {CATS.map(c => <option key={c}>{c}</option>)}
             </select>
           </div>
 
-          {/* Entries */}
-          {sortedEntries.length === 0 ? (
-            <EmptyState cropName={activeCrop ? cropName(activeCrop) : 'your farm'} />
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 20 }}>
-              {sortedEntries.map(e => (
-                <EntryCard
-                  key={getId(e)}
-                  entry={e}
-                  showCrop={!activeCrop}
-                  cropName={cropName(e.cropId?._id || e.cropId)}
-                  onDelete={() => setDeleteTarget({ id: getId(e), type: 'expense', label: `"${e.desc}" — ${fmt(e.amount)}` })}
-                />
-              ))}
+          {/* Active filter pill */}
+          {(monthFilter || catFilter) && (
+            <div style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap' }}>
+              {monthFilter && (
+                <Pill label={monthOptions.find(m => m.key === monthFilter)?.label || monthFilter}
+                  onRemove={() => { setMonthFilter(''); resetPage(); }} />
+              )}
+              {catFilter && (
+                <Pill label={catFilter} color={CAT_COLORS[catFilter]}
+                  onRemove={() => { setCatFilter(''); resetPage(); }} />
+              )}
             </div>
           )}
 
-          {/* Breakdown */}
-          {catRows.length > 0 && (
-            <div style={{ background: C.surface, border: `0.5px solid ${C.border}`, borderRadius: 12, padding: '14px', marginBottom: 20 }}>
-              <div style={{ ...serif, fontSize: 13, color: C.muted, marginBottom: 12 }}>Breakdown</div>
-              {catRows.map(c => (
-                <div key={c} style={{ marginBottom: 10 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                    <span style={{ fontSize: 12, color: C.gray700 }}>{c}</span>
-                    <span style={{ fontSize: 12, fontWeight: 500, color: CAT_COLORS[c] }}>{fmt(catTotals[c])}</span>
+          {/* Section label */}
+          <div style={{ ...serif, fontSize: 12, color: C.muted, marginBottom: 8 }}>
+            {activeCrop ? cropName(activeCrop) : 'All crops'}
+            {monthFilter ? ` · ${monthOptions.find(m => m.key === monthFilter)?.label}` : ''}
+            {catFilter ? ` · ${catFilter}` : ''}
+            {` · ${sortedAll.length} entries`}
+          </div>
+
+          {/* ── ENTRIES ── */}
+          {sortedAll.length === 0 ? (
+            <EmptyState cropName={activeCrop ? cropName(activeCrop) : 'your farm'} />
+          ) : (
+            <>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 14 }}>
+                {visibleEntries.map(e => (
+                  <EntryCard
+                    key={getId(e)}
+                    entry={e}
+                    showCrop={!activeCrop}
+                    cropName={cropName(e.cropId?._id || e.cropId)}
+                    onDelete={() => setDeleteTarget({ id: getId(e), type: 'expense', label: `"${e.desc}" — ${fmt(e.amount)}` })}
+                  />
+                ))}
+              </div>
+
+              {/* ── LOAD MORE ── */}
+              {hasMore ? (
+                <button
+                  onClick={() => setPage(p => p + 1)}
+                  style={{ width: '100%', background: 'none', border: `0.5px solid ${C.borderSt}`, borderRadius: 10, padding: '11px', ...sans, fontSize: 13, color: C.muted, cursor: 'pointer', marginBottom: 20 }}>
+                  Load more · {sortedAll.length - visibleEntries.length} remaining
+                </button>
+              ) : (
+                sortedAll.length > PAGE_SIZE && (
+                  <div style={{ textAlign: 'center', fontSize: 11, color: C.gray200, marginBottom: 20 }}>
+                    All {sortedAll.length} entries shown
                   </div>
-                  <div style={{ height: 5, background: C.gray50, borderRadius: 3, overflow: 'hidden' }}>
-                    <div style={{ height: '100%', borderRadius: 3, background: CAT_COLORS[c], width: `${Math.round(catTotals[c] / maxCat * 100)}%`, transition: 'width 0.4s' }} />
-                  </div>
-                </div>
-              ))}
-            </div>
+                )
+              )}
+            </>
           )}
 
         </>)}
@@ -319,7 +404,6 @@ export default function App() {
             </div>
           )}
 
-          {/* Crop list */}
           {crops.length === 0 && (
             <p style={{ color: C.muted, fontSize: 13, textAlign: 'center', padding: '20px 0' }}>No crops yet. Add one above.</p>
           )}
@@ -332,11 +416,10 @@ export default function App() {
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontWeight: 600, fontSize: 14, color: C.text }}>{c.name}</div>
                     <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>{c.season}{c.sowDate ? ` · Sown: ${fmtDate(c.sowDate)}` : ''}</div>
-                    {/* Stage bar */}
-                    <div style={{ display: 'flex', gap: 4, marginTop: 8, alignItems: 'center' }}>
+                    <div style={{ display: 'flex', gap: 4, marginTop: 8, flexWrap: 'wrap' }}>
                       {STAGES.map((s, i) => (
                         <button key={s} onClick={() => updateCrop(getId(c), { stage: s })}
-                          style={{ fontSize: 9, padding: '2px 7px', borderRadius: 999, border: `1px solid ${i===stageIdx?C.green600:C.gray100}`, background: i===stageIdx?C.green700:'transparent', color: i===stageIdx?'#fff':C.gray400, cursor: 'pointer', fontFamily: 'DM Sans, sans-serif' }}>
+                          style={{ fontSize: 9, padding: '2px 7px', borderRadius: 999, border: `1px solid ${i === stageIdx ? C.green600 : C.gray100}`, background: i === stageIdx ? C.green700 : 'transparent', color: i === stageIdx ? '#fff' : C.gray400, cursor: 'pointer', fontFamily: 'DM Sans, sans-serif' }}>
                           {s}
                         </button>
                       ))}
@@ -387,7 +470,7 @@ export default function App() {
   );
 }
 
-// ─── SHARED COMPONENTS ────────────────────────────────────────────────────────
+// ── SHARED STYLES ─────────────────────────────────────────────────────────────
 const serif = { fontFamily: "'Libre Baskerville', serif" };
 const sans  = { fontFamily: "'DM Sans', sans-serif" };
 
@@ -398,6 +481,14 @@ const inp = {
   boxSizing: 'border-box',
 };
 
+const filterSelect = {
+  border: `0.5px solid rgba(44,44,42,0.18)`, borderRadius: 8,
+  padding: '8px 10px', fontFamily: "'DM Sans', sans-serif", fontSize: 12,
+  background: '#fff', color: '#5F5E5A', cursor: 'pointer', outline: 'none',
+  WebkitAppearance: 'none',
+};
+
+// ── COMPONENTS ────────────────────────────────────────────────────────────────
 function CropTab({ label, sub, active, onClick }) {
   return (
     <button onClick={onClick} style={{
@@ -427,6 +518,15 @@ function FormField({ label, children, mb = 0 }) {
       <label style={{ display: 'block', fontSize: 11, fontWeight: 500, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 5 }}>{label}</label>
       {children}
     </div>
+  );
+}
+
+function Pill({ label, color, onRemove }) {
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 500, padding: '3px 8px 3px 10px', borderRadius: 999, background: color ? color + '18' : C.green50, color: color || C.green700, border: `0.5px solid ${color || C.green400}44` }}>
+      {label}
+      <button onClick={onRemove} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', fontSize: 13, lineHeight: 1, padding: 0, opacity: 0.6 }}>×</button>
+    </span>
   );
 }
 
@@ -470,15 +570,13 @@ function EmptyState({ cropName }) {
   return (
     <div style={{ textAlign: 'center', padding: '40px 20px', color: C.muted }}>
       <div style={{ fontSize: 32, marginBottom: 10 }}>🌾</div>
-      <p style={{ fontSize: 14 }}>No entries yet for {cropName}.<br />Tap "Add Expense" to begin.</p>
+      <p style={{ fontSize: 14 }}>No entries yet for {cropName}.<br />Tap "+ Add Expense" to begin.</p>
     </div>
   );
 }
 
 function LoadingState() {
-  return (
-    <div style={{ textAlign: 'center', padding: '40px 20px', color: C.muted, fontSize: 14 }}>Loading…</div>
-  );
+  return <div style={{ textAlign: 'center', padding: '40px 20px', color: C.muted, fontSize: 14 }}>Loading…</div>;
 }
 
 function ErrorState({ msg, onRetry }) {
