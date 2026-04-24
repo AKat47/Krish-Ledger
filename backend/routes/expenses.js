@@ -1,3 +1,3 @@
 const crudRouter = require('../middleware/crudRouter');
 const { Expense } = require('../models');
-module.exports = crudRouter(Expense, ['cropId']);
+module.exports = crudRouter(Expense);

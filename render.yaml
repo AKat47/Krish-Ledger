@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: krishiledger-api
+    name: farmledger-api
     env: node
     region: singapore
     plan: free
@@ -9,8 +9,8 @@ services:
     startCommand: node server.js
     envVars:
       - key: MONGODB_URI
-        sync: false          # ← you fill this in Render dashboard
+        sync: false
       - key: NODE_ENV
         value: production
       - key: FRONTEND_URL
-        sync: false          # ← your Vercel URL e.g. https://krishiledger.vercel.app
+        sync: false
