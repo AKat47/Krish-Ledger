@@ -24,6 +24,12 @@ export function useData() {
     return doc;
   };
 
+  const updateExpense = async (id, data) => {
+    const doc = await api.expenses.update(id, data);
+    setExpenses(prev => prev.map(e => (e._id || e.id) === id ? doc : e));
+    return doc;
+  };
+
   const deleteExpense = async (id) => {
     await api.expenses.delete(id);
     setExpenses(prev => prev.filter(e => (e._id || e.id) !== id));
@@ -46,5 +52,9 @@ export function useData() {
     setCrops(prev => prev.filter(c => (c._id || c.id) !== id));
   };
 
-  return { crops, expenses, loading, error, reload: load, addExpense, deleteExpense, addCrop, updateCrop, deleteCrop };
+  return {
+    crops, expenses, loading, error, reload: load,
+    addExpense, updateExpense, deleteExpense,
+    addCrop, updateCrop, deleteCrop,
+  };
 }

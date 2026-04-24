@@ -16,15 +16,16 @@ async function req(method, path, body) {
 }
 
 export const api = {
-  expenses:  {
-    list:   ()       => req('GET',    '/expenses'),
-    create: (d)      => req('POST',   '/expenses', d),
-    delete: (id)     => req('DELETE', `/expenses/${id}`),
+  expenses: {
+    list:   ()        => req('GET',    '/expenses'),
+    create: (d)       => req('POST',   '/expenses', d),
+    update: (id, d)   => req('PUT',    `/expenses/${id}`, d),
+    delete: (id)      => req('DELETE', `/expenses/${id}`),
   },
   crops: {
-    list:   ()       => req('GET',    '/crops'),
-    create: (d)      => req('POST',   '/crops', d),
-    update: (id, d)  => req('PUT',    `/crops/${id}`, d),
-    delete: (id)     => req('DELETE', `/crops/${id}`),
+    list:   ()        => req('GET',    '/crops'),
+    create: (d)       => req('POST',   '/crops', d),
+    update: (id, d)   => req('PUT',    `/crops/${id}`, d),
+    delete: (id)      => req('DELETE', `/crops/${id}`),
   },
 };
