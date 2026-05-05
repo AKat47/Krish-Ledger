@@ -13,10 +13,12 @@ app.use(express.json());
 
 app.use('/api/crops',    require('./routes/crops'));
 app.use('/api/expenses', require('./routes/expenses'));
+app.use('/api/income',   require('./routes/income'));
+app.use('/api/inputs',   require('./routes/inputs'));
 
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', db: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected' });
-});
+app.get('/api/health', (req, res) =>
+  res.json({ status: 'ok', db: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected' })
+);
 
 app.use((err, req, res, next) => {
   console.error(err.stack);

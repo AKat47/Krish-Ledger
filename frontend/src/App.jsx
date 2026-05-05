@@ -1,6 +1,9 @@
 import { useState, useMemo } from 'react';
 import { useData } from './hooks/useData';
-import { SEASONS, CATS, CAT_COLORS, STAGES, C, fmt, getId, fmtDate } from './constants';
+import {
+  SEASONS, EXP_CATS, EXP_CAT_COLORS, INPUT_TYPES, INPUT_MARKET_RATE,
+  INCOME_SOURCES, STAGES, TABS, C, fmt, getId, fmtDate, thisMonthKey, monthKey,
+} from './constants';
 
 const GLOBAL = `
   @import url('https://fonts.googleapis.com/css2?family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=DM+Sans:wght@300;400;500;600&display=swap');
@@ -12,389 +15,158 @@ const GLOBAL = `
   scrollbar-width: none;
 `;
 if (!document.getElementById('fl-global')) {
-  const s = document.createElement('style');
-  s.id = 'fl-global'; s.textContent = GLOBAL;
+  const s = document.createElement('style'); s.id = 'fl-global'; s.textContent = GLOBAL;
   document.head.appendChild(s);
 }
 
-const PAGE_SIZE = 20;
+const PAGE = 20;
+const serif = { fontFamily: "'Libre Baskerville', serif" };
+const sans  = { fontFamily: "'DM Sans', sans-serif" };
+const inp   = { width:'100%', border:`0.5px solid rgba(44,44,42,0.22)`, borderRadius:8, padding:'9px 12px', fontFamily:"'DM Sans',sans-serif", fontSize:14, background:'#F7F5F0', color:'#2C2C2A', outline:'none', WebkitAppearance:'none', boxSizing:'border-box' };
+const fsel  = { border:`0.5px solid rgba(44,44,42,0.18)`, borderRadius:8, padding:'7px 10px', fontFamily:"'DM Sans',sans-serif", fontSize:12, background:'#fff', color:'#5F5E5A', cursor:'pointer', outline:'none', WebkitAppearance:'none' };
 
-function buildMonthOptions(expenses) {
-  const seen = new Set();
-  const months = [];
-  [...expenses].sort((a, b) => new Date(b.date) - new Date(a.date)).forEach(e => {
-    if (!e.date) return;
-    const d   = new Date(e.date);
-    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-    if (!seen.has(key)) {
-      seen.add(key);
-      months.push({ key, label: d.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' }) });
-    }
+function today() { return new Date().toISOString().split('T')[0]; }
+
+function buildMonths(list) {
+  const seen = new Set(), months = [];
+  [...list].sort((a,b) => new Date(b.date)-new Date(a.date)).forEach(e => {
+    const k = monthKey(e.date);
+    if (k && !seen.has(k)) { seen.add(k); months.push({ key:k, label: new Date(e.date).toLocaleDateString('en-IN',{month:'long',year:'numeric'}) }); }
   });
   return months;
 }
 
+// ── APP ───────────────────────────────────────────────────────────────────────
 export default function App() {
-  const { crops, expenses, loading, error, reload,
-          addExpense, updateExpense, deleteExpense,
-          addCrop, updateCrop, deleteCrop } = useData();
+  const db = useData();
+  const [tab,      setTab]      = useState('dashboard');
+  const [editItem, setEditItem] = useState(null);  // { type, data }
+  const [addType,  setAddType]  = useState(null);  // 'expense'|'income'|'input'|'crop'
+  const [toast,    setToast]    = useState('');
+  const [saving,   setSaving]   = useState(false);
 
-  const [activeCrop,   setActiveCrop]   = useState(null);
-  const [catFilter,    setCatFilter]    = useState('');
-  const [monthFilter,  setMonthFilter]  = useState('');
-  const [showAddForm,  setShowAddForm]  = useState(false);
-  const [showCropForm, setShowCropForm] = useState(false);
-  const [showCropMgr,  setShowCropMgr]  = useState(false);
-  const [editEntry,    setEditEntry]    = useState(null);   // expense object being edited
-  const [toast,        setToast]        = useState('');
-  const [saving,       setSaving]       = useState(false);
-  const [page,         setPage]         = useState(1);
+  const showToast = (m) => { setToast(m); setTimeout(() => setToast(''), 2800); };
 
-  const [addForm,  setAddForm]  = useState({ amount: '', desc: '', date: today(), category: CATS[0], notes: '', cropId: '' });
-  const [cropForm, setCropForm] = useState({ name: '', season: SEASONS[0], stage: 'Sowing', sowDate: '' });
-
-  function today() { return new Date().toISOString().split('T')[0]; }
-  const showToast  = (msg) => { setToast(msg); setTimeout(() => setToast(''), 2800); };
-  const resetPage  = () => setPage(1);
-
-  // ── Filter pipeline ───────────────────────────────────────────────────────
-  const byCrop = useMemo(() =>
-    activeCrop ? expenses.filter(e => (e.cropId?._id || e.cropId) === activeCrop) : expenses,
-  [expenses, activeCrop]);
-
-  const byMonth = useMemo(() =>
-    monthFilter ? byCrop.filter(e => {
-      if (!e.date) return false;
-      const d = new Date(e.date);
-      return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}` === monthFilter;
-    }) : byCrop,
-  [byCrop, monthFilter]);
-
-  const byCat = useMemo(() =>
-    catFilter ? byMonth.filter(e => e.category === catFilter) : byMonth,
-  [byMonth, catFilter]);
-
-  const sortedAll      = useMemo(() => [...byCat].sort((a, b) => new Date(b.date) - new Date(a.date)), [byCat]);
-  const visibleEntries = sortedAll.slice(0, page * PAGE_SIZE);
-  const hasMore        = visibleEntries.length < sortedAll.length;
-
-  // ── Stats & breakdown ─────────────────────────────────────────────────────
-  const grandTotal   = expenses.reduce((s, e) => s + Number(e.amount), 0);
-  const totalForView = byMonth.reduce((s, e) => s + Number(e.amount), 0);
-
-  const catTotals = useMemo(() => {
-    const t = {};
-    CATS.forEach(c => t[c] = 0);
-    byMonth.forEach(e => { if (t[e.category] !== undefined) t[e.category] += Number(e.amount); });
-    return t;
-  }, [byMonth]);
-  const maxCat  = Math.max(...Object.values(catTotals), 1);
-  const catRows = CATS.filter(c => catTotals[c] > 0).sort((a, b) => catTotals[b] - catTotals[a]);
-
-  const monthOptions = useMemo(() => buildMonthOptions(byCrop), [byCrop]);
-
-  // ── Add expense ───────────────────────────────────────────────────────────
-  const handleAddExpense = async () => {
-    if (!addForm.amount || Number(addForm.amount) <= 0) { showToast('Enter a valid amount'); return; }
-    if (!addForm.desc.trim()) { showToast('Add a description'); return; }
-    if (!addForm.date) { showToast('Pick a date'); return; }
+  const run = async (fn, msg) => {
     setSaving(true);
-    try {
-      await addExpense({ ...addForm, amount: Number(addForm.amount), cropId: addForm.cropId || null });
-      setAddForm({ amount: '', desc: '', date: today(), category: CATS[0], notes: '', cropId: activeCrop || '' });
-      setShowAddForm(false);
-      resetPage();
-      showToast('Expense added');
-    } catch (err) { showToast(err.message); }
+    try { await fn(); showToast(msg); }
+    catch(e) { showToast(e.message); }
     finally { setSaving(false); }
   };
 
-  // ── Update expense ────────────────────────────────────────────────────────
-  const handleUpdateExpense = async (id, updated) => {
-    setSaving(true);
-    try {
-      await updateExpense(id, { ...updated, amount: Number(updated.amount), cropId: updated.cropId || null });
-      setEditEntry(null);
-      showToast('Updated');
-    } catch (err) { showToast(err.message); }
-    finally { setSaving(false); }
+  const cropName = (id) => db.crops.find(c => getId(c) === (id?._id || id))?.name || '—';
+
+  // ─── TAB CONTENT ──────────────────────────────────────────────────────────
+  const content = () => {
+    if (db.loading) return <Center>Loading…</Center>;
+    if (db.error)   return <ErrState msg={db.error} onRetry={db.reload} />;
+    switch (tab) {
+      case 'dashboard': return <Dashboard db={db} cropName={cropName} />;
+      case 'expenses':  return <ListTab collection={db.expenses} type="expense"  db={db} cropName={cropName} onTap={setEditItem} />;
+      case 'income':    return <ListTab collection={db.income}   type="income"   db={db} cropName={cropName} onTap={setEditItem} />;
+      case 'inputs':    return <InputsTab db={db} cropName={cropName} onTap={setEditItem} />;
+      case 'crops':     return <CropsTab db={db} saving={saving} run={run} />;
+      default:          return null;
+    }
   };
 
-  // ── Delete expense ────────────────────────────────────────────────────────
-  const handleDeleteExpense = async (id) => {
-    setSaving(true);
-    try {
-      await deleteExpense(id);
-      setEditEntry(null);
-      showToast('Removed');
-    } catch (err) { showToast(err.message); }
-    finally { setSaving(false); }
-  };
+  const addLabel = { expense:'+ Add Expense', income:'+ Add Income', input:'+ Log Input', crop:'+ Add Crop' };
+  const tabAddType = { expenses:'expense', income:'income', inputs:'input', crops:'crop' };
 
-  // ── Add crop ──────────────────────────────────────────────────────────────
-  const handleSaveCrop = async () => {
-    if (!cropForm.name.trim()) { showToast('Enter crop name'); return; }
-    setSaving(true);
-    try {
-      await addCrop(cropForm);
-      setCropForm({ name: '', season: SEASONS[0], stage: 'Sowing', sowDate: '' });
-      setShowCropForm(false);
-      showToast('Crop added');
-    } catch (err) { showToast(err.message); }
-    finally { setSaving(false); }
-  };
-
-  // ── Delete crop ───────────────────────────────────────────────────────────
-  const handleDeleteCrop = async (id) => {
-    setSaving(true);
-    try {
-      await deleteCrop(id);
-      showToast('Crop removed');
-    } catch (err) { showToast(err.message); }
-    finally { setSaving(false); }
-  };
-
-  const cropName = (id) => crops.find(c => getId(c) === id)?.name || '—';
-
-  const switchCrop = (id) => { setActiveCrop(id); setCatFilter(''); setMonthFilter(''); resetPage(); };
-
-  // ─────────────────────────────────────────────────────────────────────────
   return (
-    <div style={{ fontFamily: "'DM Sans', sans-serif", background: C.bg, minHeight: '100vh', maxWidth: 480, margin: '0 auto', paddingBottom: 40 }}>
+    <div style={{ fontFamily:"'DM Sans',sans-serif", background:C.bg, minHeight:'100vh', maxWidth:480, margin:'0 auto', paddingBottom:80 }}>
 
       {/* ── HEADER ── */}
-      <div style={{ background: C.green800, padding: '18px 16px 0', position: 'sticky', top: 0, zIndex: 50 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-          <div style={{ ...serif, color: C.green50, fontSize: 19, letterSpacing: '-0.01em' }}>
-            Farm <span style={{ color: C.green200, fontStyle: 'italic' }}>Ledger</span>
+      <div style={{ background:C.green800, padding:'16px 16px 0', position:'sticky', top:0, zIndex:50 }}>
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:12 }}>
+          <div style={{ ...serif, color:C.green50, fontSize:18, letterSpacing:'-0.01em' }}>
+            Farm <span style={{ color:C.green200, fontStyle:'italic' }}>Ledger</span>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ background: C.green700, color: C.green100, fontSize: 11, fontWeight: 500, padding: '4px 10px', borderRadius: 20 }}>
-              {fmt(grandTotal)}
+          <div style={{ display:'flex', gap:6, alignItems:'center' }}>
+            <span style={{ background:C.green700, color:C.green100, fontSize:11, fontWeight:500, padding:'3px 9px', borderRadius:20 }}>
+              {fmt(db.expenses.reduce((s,e)=>s+Number(e.amount),0))} spent
             </span>
-            <button onClick={() => setShowCropMgr(true)}
-              style={{ background: 'transparent', border: `1px solid ${C.green600}`, color: C.green200, borderRadius: 8, padding: '4px 10px', fontSize: 12, cursor: 'pointer' }}>
-              Crops
-            </button>
           </div>
         </div>
 
-        {/* Crop tabs */}
-        <div style={{ display: 'flex', gap: 2, overflowX: 'auto', scrollbarWidth: 'none' }}>
-          <CropTab label="All" sub={grandTotal > 0 ? fmt(grandTotal) : ''} active={activeCrop === null} onClick={() => switchCrop(null)} />
-          {crops.map(c => {
-            const tot = expenses.filter(e => (e.cropId?._id || e.cropId) === getId(c)).reduce((s, e) => s + Number(e.amount), 0);
-            return <CropTab key={getId(c)} label={c.name} sub={tot > 0 ? fmt(tot) : ''} active={activeCrop === getId(c)} onClick={() => switchCrop(getId(c))} />;
-          })}
+        {/* Tab bar */}
+        <div style={{ display:'flex', gap:0, overflowX:'auto', scrollbarWidth:'none' }}>
+          {TABS.map(t => (
+            <button key={t.id} onClick={() => setTab(t.id)} style={{
+              flex:'0 0 auto', background: tab===t.id ? C.bg : 'none', border:'none',
+              color: tab===t.id ? C.green800 : C.green200,
+              fontFamily:"'DM Sans',sans-serif", fontSize:12, fontWeight: tab===t.id ? 600 : 400,
+              padding:'8px 14px 10px', cursor:'pointer', borderRadius:'6px 6px 0 0',
+              display:'flex', flexDirection:'column', alignItems:'center', gap:2,
+            }}>
+              <span style={{ fontSize:15 }}>{t.icon}</span>
+              <span>{t.label}</span>
+            </button>
+          ))}
         </div>
       </div>
 
       {/* ── CONTENT ── */}
-      <div style={{ padding: '14px 14px 0' }}>
-        {loading && <LoadingState />}
-        {error   && <ErrorState msg={error} onRetry={reload} />}
-
-        {!loading && !error && (<>
-
-          {/* Summary strip */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 14 }}>
-            <StatCard label="Total"    value={fmt(totalForView)} accent />
-            <StatCard label="Entries"  value={byMonth.length} />
-            <StatCard label="Showing"  value={`${visibleEntries.length} / ${sortedAll.length}`} />
-          </div>
-
-          {/* Breakdown */}
-          {catRows.length > 0 && (
-            <div style={{ background: C.surface, border: `0.5px solid ${C.border}`, borderRadius: 12, padding: '14px', marginBottom: 14 }}>
-              <div style={{ ...serif, fontSize: 13, color: C.muted, marginBottom: 12 }}>Breakdown</div>
-              {catRows.map(c => (
-                <div key={c} style={{ marginBottom: 10, cursor: 'pointer' }}
-                  onClick={() => { setCatFilter(catFilter === c ? '' : c); resetPage(); }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                    <span style={{ fontSize: 12, color: catFilter === c ? CAT_COLORS[c] : C.gray700, fontWeight: catFilter === c ? 600 : 400 }}>{c}</span>
-                    <span style={{ fontSize: 12, fontWeight: 500, color: CAT_COLORS[c] }}>{fmt(catTotals[c])}</span>
-                  </div>
-                  <div style={{ height: 5, background: C.gray50, borderRadius: 3, overflow: 'hidden' }}>
-                    <div style={{ height: '100%', borderRadius: 3, background: CAT_COLORS[c], width: `${Math.round(catTotals[c] / maxCat * 100)}%`, transition: 'width 0.4s', opacity: catFilter && catFilter !== c ? 0.3 : 1 }} />
-                  </div>
-                </div>
-              ))}
-              {catFilter && (
-                <button onClick={() => { setCatFilter(''); resetPage(); }}
-                  style={{ marginTop: 4, fontSize: 11, color: C.green700, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
-                  ✕ Clear filter
-                </button>
-              )}
-            </div>
-          )}
-
-          {/* Add button */}
-          <button onClick={() => { setAddForm(f => ({ ...f, cropId: activeCrop || '', date: today() })); setShowAddForm(v => !v); }}
-            style={{ width: '100%', background: C.green700, color: C.green50, border: 'none', borderRadius: 10, padding: '13px', ...sans, fontSize: 14, fontWeight: 500, cursor: 'pointer', marginBottom: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-            {showAddForm ? '✕ Cancel' : '+ Add Expense'}
-          </button>
-
-          {/* Add form */}
-          {showAddForm && (
-            <ExpenseForm
-              title="New Expense"
-              values={addForm}
-              crops={crops}
-              saving={saving}
-              onChange={setAddForm}
-              onSave={handleAddExpense}
-              onCancel={() => setShowAddForm(false)}
-            />
-          )}
-
-          {/* Filter bar */}
-          <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-            <select value={monthFilter} onChange={e => { setMonthFilter(e.target.value); resetPage(); }} style={{ ...filterSel, flex: 1 }}>
-              <option value="">All months</option>
-              {monthOptions.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
-            </select>
-            <select value={catFilter} onChange={e => { setCatFilter(e.target.value); resetPage(); }} style={{ ...filterSel, flex: 1 }}>
-              <option value="">All categories</option>
-              {CATS.map(c => <option key={c}>{c}</option>)}
-            </select>
-          </div>
-
-          {/* Active filter pills */}
-          {(monthFilter || catFilter) && (
-            <div style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap' }}>
-              {monthFilter && <Pill label={monthOptions.find(m => m.key === monthFilter)?.label || monthFilter} onRemove={() => { setMonthFilter(''); resetPage(); }} />}
-              {catFilter   && <Pill label={catFilter} color={CAT_COLORS[catFilter]} onRemove={() => { setCatFilter(''); resetPage(); }} />}
-            </div>
-          )}
-
-          {/* Section label */}
-          <div style={{ ...serif, fontSize: 12, color: C.muted, marginBottom: 8 }}>
-            {activeCrop ? cropName(activeCrop) : 'All crops'}
-            {monthFilter ? ` · ${monthOptions.find(m => m.key === monthFilter)?.label}` : ''}
-            {catFilter   ? ` · ${catFilter}` : ''}
-            {` · ${sortedAll.length} entries`}
-          </div>
-
-          {/* Entries — tap to edit */}
-          {sortedAll.length === 0 ? (
-            <EmptyState />
-          ) : (
-            <>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 14 }}>
-                {visibleEntries.map(e => (
-                  <EntryCard
-                    key={getId(e)}
-                    entry={e}
-                    showCrop={!activeCrop}
-                    cropName={cropName(e.cropId?._id || e.cropId)}
-                    onTap={() => setEditEntry(e)}
-                  />
-                ))}
-              </div>
-
-              {hasMore ? (
-                <button onClick={() => setPage(p => p + 1)}
-                  style={{ width: '100%', background: 'none', border: `0.5px solid ${C.borderSt}`, borderRadius: 10, padding: '11px', ...sans, fontSize: 13, color: C.muted, cursor: 'pointer', marginBottom: 20 }}>
-                  Load more · {sortedAll.length - visibleEntries.length} remaining
-                </button>
-              ) : (
-                sortedAll.length > PAGE_SIZE && (
-                  <div style={{ textAlign: 'center', fontSize: 11, color: C.gray200, marginBottom: 20 }}>All {sortedAll.length} entries shown</div>
-                )
-              )}
-            </>
-          )}
-
-        </>)}
+      <div style={{ padding:'14px 14px 0' }}>
+        {content()}
       </div>
 
-      {/* ── EDIT EXPENSE SHEET ── */}
-      {editEntry && (
-        <EditSheet
-          entry={editEntry}
-          crops={crops}
-          saving={saving}
-          onUpdate={handleUpdateExpense}
-          onDelete={handleDeleteExpense}
-          onClose={() => setEditEntry(null)}
-        />
+      {/* ── BOTTOM FAB ── */}
+      {tabAddType[tab] && !db.loading && (
+        <button
+          onClick={() => setAddType(tabAddType[tab])}
+          style={{ position:'fixed', bottom:20, right:20, zIndex:90, background:C.green700, color:'#fff', border:'none', borderRadius:999, padding:'14px 20px', ...sans, fontSize:14, fontWeight:600, cursor:'pointer', boxShadow:'0 4px 20px rgba(59,109,17,0.4)', display:'flex', alignItems:'center', gap:6 }}>
+          {addLabel[tabAddType[tab]]}
+        </button>
       )}
 
-      {/* ── CROP MANAGER SHEET ── */}
-      {showCropMgr && (
-        <Sheet title="Manage Crops" onClose={() => { setShowCropMgr(false); setShowCropForm(false); }}>
-          <button onClick={() => setShowCropForm(v => !v)}
-            style={{ width: '100%', background: C.green700, color: '#fff', border: 'none', borderRadius: 8, padding: 11, ...sans, fontSize: 14, fontWeight: 500, cursor: 'pointer', marginBottom: 14 }}>
-            {showCropForm ? '✕ Cancel' : '+ Add New Crop'}
-          </button>
-
-          {showCropForm && (
-            <div style={{ background: C.bg, borderRadius: 10, padding: 14, marginBottom: 14 }}>
-              <FormField label="Crop Name" mb={10}>
-                <input style={inp} placeholder="e.g. Paddy" value={cropForm.name}
-                  onChange={e => setCropForm(f => ({ ...f, name: e.target.value }))} autoFocus />
-              </FormField>
-              <FormField label="Season" mb={10}>
-                <select style={inp} value={cropForm.season} onChange={e => setCropForm(f => ({ ...f, season: e.target.value }))}>
-                  {SEASONS.map(s => <option key={s}>{s}</option>)}
-                </select>
-              </FormField>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
-                <FormField label="Stage">
-                  <select style={inp} value={cropForm.stage} onChange={e => setCropForm(f => ({ ...f, stage: e.target.value }))}>
-                    {STAGES.map(s => <option key={s}>{s}</option>)}
-                  </select>
-                </FormField>
-                <FormField label="Sow Date">
-                  <input style={inp} type="date" value={cropForm.sowDate}
-                    onChange={e => setCropForm(f => ({ ...f, sowDate: e.target.value }))} />
-                </FormField>
-              </div>
-              <button onClick={handleSaveCrop} disabled={saving}
-                style={{ width: '100%', background: C.green700, color: '#fff', border: 'none', borderRadius: 8, padding: 11, ...sans, fontSize: 14, fontWeight: 500, cursor: 'pointer', opacity: saving ? 0.6 : 1 }}>
-                {saving ? 'Saving…' : 'Save Crop'}
-              </button>
-            </div>
+      {/* ── ADD SHEET ── */}
+      {addType && (
+        <Sheet title={addLabel[addType]} onClose={() => setAddType(null)}>
+          {addType === 'expense' && (
+            <ExpenseForm crops={db.crops} saving={saving}
+              onSave={v => run(async () => { await db.addExpense(v); setAddType(null); }, 'Expense added')} />
           )}
-
-          {crops.length === 0 && (
-            <p style={{ color: C.muted, fontSize: 13, textAlign: 'center', padding: '20px 0' }}>No crops yet. Add one above.</p>
+          {addType === 'income' && (
+            <IncomeForm crops={db.crops} saving={saving}
+              onSave={v => run(async () => { await db.addIncome(v); setAddType(null); }, 'Income recorded')} />
           )}
-          {crops.map(c => {
-            const stageIdx = STAGES.indexOf(c.stage);
-            const tot = expenses.filter(e => (e.cropId?._id || e.cropId) === getId(c)).reduce((s, e) => s + Number(e.amount), 0);
-            return (
-              <div key={getId(c)} style={{ background: C.surface, border: `0.5px solid ${C.border}`, borderRadius: 10, padding: '12px 14px', marginBottom: 8 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 600, fontSize: 14, color: C.text }}>{c.name}</div>
-                    <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>{c.season}{c.sowDate ? ` · Sown: ${fmtDate(c.sowDate)}` : ''}</div>
-                    <div style={{ display: 'flex', gap: 4, marginTop: 8, flexWrap: 'wrap' }}>
-                      {STAGES.map((s, i) => (
-                        <button key={s} onClick={() => updateCrop(getId(c), { stage: s })}
-                          style={{ fontSize: 9, padding: '2px 7px', borderRadius: 999, border: `1px solid ${i === stageIdx ? C.green600 : C.gray100}`, background: i === stageIdx ? C.green700 : 'transparent', color: i === stageIdx ? '#fff' : C.gray400, cursor: 'pointer', fontFamily: 'DM Sans, sans-serif' }}>
-                          {s}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  <div style={{ textAlign: 'right', flexShrink: 0, marginLeft: 10 }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: C.green700 }}>{tot > 0 ? fmt(tot) : '—'}</div>
-                    <button onClick={() => handleDeleteCrop(getId(c))}
-                      style={{ marginTop: 6, fontSize: 11, color: '#D85A30', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
-                      Remove
-                    </button>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
+          {addType === 'input' && (
+            <InputForm crops={db.crops} saving={saving}
+              onSave={v => run(async () => { await db.addInput(v); setAddType(null); }, 'Input logged')} />
+          )}
+          {addType === 'crop' && (
+            <CropForm saving={saving}
+              onSave={v => run(async () => { await db.addCrop(v); setAddType(null); }, 'Crop added')} />
+          )}
         </Sheet>
+      )}
+
+      {/* ── EDIT SHEET ── */}
+      {editItem && (
+        <EditSheet
+          item={editItem}
+          crops={db.crops}
+          saving={saving}
+          onUpdate={(id, v) => run(async () => {
+            if (editItem.type==='expense') await db.updateExpense(id, v);
+            if (editItem.type==='income')  await db.updateIncome(id, v);
+            if (editItem.type==='input')   await db.updateInput(id, v);
+            setEditItem(null);
+          }, 'Updated')}
+          onDelete={(id) => run(async () => {
+            if (editItem.type==='expense') await db.deleteExpense(id);
+            if (editItem.type==='income')  await db.deleteIncome(id);
+            if (editItem.type==='input')   await db.deleteInput(id);
+            setEditItem(null);
+          }, 'Removed')}
+          onClose={() => setEditItem(null)}
+        />
       )}
 
       {/* ── TOAST ── */}
       {toast && (
-        <div style={{ position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', background: C.gray900, color: '#fff', padding: '10px 18px', borderRadius: 20, fontSize: 13, fontWeight: 500, zIndex: 400, whiteSpace: 'nowrap', boxShadow: '0 4px 20px rgba(0,0,0,0.2)' }}>
+        <div style={{ position:'fixed', bottom:80, left:'50%', transform:'translateX(-50%)', background:C.gray900, color:'#fff', padding:'10px 18px', borderRadius:20, fontSize:13, fontWeight:500, zIndex:400, whiteSpace:'nowrap', boxShadow:'0 4px 20px rgba(0,0,0,0.2)' }}>
           {toast}
         </div>
       )}
@@ -402,250 +174,522 @@ export default function App() {
   );
 }
 
-// ── EDIT SHEET ────────────────────────────────────────────────────────────────
-function EditSheet({ entry, crops, saving, onUpdate, onDelete, onClose }) {
-  const [v, setV] = useState({
-    amount:   String(entry.amount),
-    desc:     entry.desc     || '',
-    date:     entry.date     || '',
-    category: entry.category || CATS[0],
-    notes:    entry.notes    || '',
-    cropId:   entry.cropId?._id || entry.cropId || '',
-  });
-  const [confirmDel, setConfirmDel] = useState(false);
+// ── DASHBOARD ─────────────────────────────────────────────────────────────────
+function Dashboard({ db, cropName }) {
+  const mk   = thisMonthKey();
+  const mExp = db.expenses.filter(e => monthKey(e.date) === mk);
+  const mInc = db.income.filter(i   => monthKey(i.date) === mk);
+  const mInp = db.inputs.filter(i   => monthKey(i.date) === mk);
+
+  const totalExpense   = db.expenses.reduce((s,e) => s+Number(e.amount), 0);
+  const totalIncome    = db.income.reduce((s,i)   => s+Number(i.amount), 0);
+  const totalSavings   = db.inputs.reduce((s,i)   => s+Number(i.marketValue||0)-Number(i.costMade||0), 0);
+  const mExpAmt        = mExp.reduce((s,e) => s+Number(e.amount), 0);
+  const mIncAmt        = mInc.reduce((s,i) => s+Number(i.amount), 0);
+  const mSavings       = mInp.reduce((s,i) => s+Number(i.marketValue||0)-Number(i.costMade||0), 0);
+  const mInputCost     = mInp.reduce((s,i) => s+Number(i.costMade||0), 0);
+  const mInputMktVal   = mInp.reduce((s,i) => s+Number(i.marketValue||0), 0);
+  const netProfit      = totalIncome - totalExpense + totalSavings;
+
+  // By crop breakdown
+  const cropBreakdown = db.crops.map(c => {
+    const id  = getId(c);
+    const exp = db.expenses.filter(e => (e.cropId?._id||e.cropId)===id).reduce((s,e)=>s+Number(e.amount),0);
+    const inc = db.income.filter(i   => (i.cropId?._id||i.cropId)===id).reduce((s,i)=>s+Number(i.amount),0);
+    const sav = db.inputs.filter(i   => (i.cropId?._id||i.cropId)===id).reduce((s,i)=>s+Number(i.marketValue||0)-Number(i.costMade||0),0);
+    return { crop:c, exp, inc, sav, net: inc - exp + sav };
+  }).filter(x => x.exp > 0 || x.inc > 0);
+
+  // Inputs by type this month
+  const inputByType = {};
+  mInp.forEach(i => { if (!inputByType[i.type]) inputByType[i.type]=0; inputByType[i.type]++; });
+
+  const mn = new Date().toLocaleDateString('en-IN',{month:'long',year:'numeric'});
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: '#00000055', zIndex: 200, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}
-      onClick={e => e.target === e.currentTarget && onClose()}>
-      <div style={{ background: C.bg, borderRadius: '20px 20px 0 0', width: '100%', maxWidth: 480, maxHeight: '92vh', overflowY: 'auto', padding: '20px 16px 36px' }}>
+    <div>
+      {/* Overall KPIs */}
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:14 }}>
+        <KPICard label="Total Spent"    value={fmt(totalExpense)} color={C.coral400} bg={C.coral50}  />
+        <KPICard label="Total Income"   value={fmt(totalIncome)}  color={C.teal400}  bg={C.teal50}   />
+        <KPICard label="Input Savings"  value={fmt(totalSavings)} color={C.green600} bg={C.green50}  />
+        <KPICard label="Net Balance"    value={fmt(netProfit)}    color={netProfit>=0?C.teal400:C.coral400} bg={netProfit>=0?C.teal50:C.coral50} />
+      </div>
 
-        {/* Sheet header */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
-          <div style={{ ...serif, fontSize: 15, color: C.green800 }}>Edit Expense</div>
-          <button onClick={onClose} style={{ background: C.gray50, border: 'none', borderRadius: 8, width: 30, height: 30, cursor: 'pointer', fontSize: 16, color: C.muted }}>✕</button>
+      {/* This month panel */}
+      <div style={{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:14, marginBottom:14 }}>
+        <div style={{ ...serif, fontSize:13, color:C.green800, marginBottom:12 }}>{mn}</div>
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:8, marginBottom:12 }}>
+          <MiniStat label="Spent"   value={fmt(mExpAmt)}  color={C.coral400} />
+          <MiniStat label="Earned"  value={fmt(mIncAmt)}  color={C.teal400}  />
+          <MiniStat label="Saved"   value={fmt(mSavings)} color={C.green600} />
         </div>
-
-        {/* Form fields */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
-          <FormField label="Amount (₹)">
-            <input style={inp} type="number" inputMode="numeric" value={v.amount}
-              onChange={e => setV(p => ({ ...p, amount: e.target.value }))} />
-          </FormField>
-          <FormField label="Date">
-            <input style={inp} type="date" value={v.date}
-              onChange={e => setV(p => ({ ...p, date: e.target.value }))} />
-          </FormField>
-        </div>
-
-        <FormField label="Description" mb={10}>
-          <input style={inp} value={v.desc} placeholder="What was this for?"
-            onChange={e => setV(p => ({ ...p, desc: e.target.value }))} />
-        </FormField>
-
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
-          <FormField label="Category">
-            <select style={inp} value={v.category} onChange={e => setV(p => ({ ...p, category: e.target.value }))}>
-              {CATS.map(c => <option key={c}>{c}</option>)}
-            </select>
-          </FormField>
-          <FormField label="Crop">
-            <select style={inp} value={v.cropId} onChange={e => setV(p => ({ ...p, cropId: e.target.value }))}>
-              <option value="">— None —</option>
-              {crops.map(c => <option key={getId(c)} value={getId(c)}>{c.name}</option>)}
-            </select>
-          </FormField>
-        </div>
-
-        <FormField label="Notes (optional)" mb={18}>
-          <input style={inp} value={v.notes} placeholder="Any additional notes…"
-            onChange={e => setV(p => ({ ...p, notes: e.target.value }))} />
-        </FormField>
-
-        {/* Save button */}
-        <button
-          onClick={() => onUpdate(getId(entry), v)}
-          disabled={saving}
-          style={{ width: '100%', background: C.green700, color: '#fff', border: 'none', borderRadius: 10, padding: 13, ...sans, fontSize: 14, fontWeight: 500, cursor: 'pointer', marginBottom: 10, opacity: saving ? 0.6 : 1 }}>
-          {saving ? 'Saving…' : 'Save Changes'}
-        </button>
-
-        {/* Delete */}
-        {!confirmDel ? (
-          <button
-            onClick={() => setConfirmDel(true)}
-            style={{ width: '100%', background: 'none', border: `0.5px solid #D85A3044`, borderRadius: 10, padding: 13, ...sans, fontSize: 14, color: '#D85A30', cursor: 'pointer' }}>
-            Delete Entry
-          </button>
-        ) : (
-          <div style={{ background: '#FAECE7', border: '0.5px solid #D85A3066', borderRadius: 10, padding: '14px' }}>
-            <div style={{ fontSize: 13, color: C.muted, marginBottom: 12, textAlign: 'center' }}>
-              Are you sure? This cannot be undone.
+        {mInp.length > 0 && (
+          <div style={{ background:C.green50, borderRadius:8, padding:'10px 12px' }}>
+            <div style={{ fontSize:12, fontWeight:600, color:C.green700, marginBottom:6 }}>🌿 Organic Inputs This Month</div>
+            <div style={{ display:'flex', gap:6, flexWrap:'wrap', marginBottom:6 }}>
+              {Object.entries(inputByType).map(([type,count]) => (
+                <span key={type} style={{ fontSize:11, background:C.green100, color:C.green800, padding:'2px 8px', borderRadius:999 }}>
+                  {type} × {count}
+                </span>
+              ))}
             </div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button onClick={() => setConfirmDel(false)}
-                style={{ flex: 1, background: 'none', border: `0.5px solid ${C.borderSt}`, borderRadius: 8, padding: 11, ...sans, fontSize: 14, cursor: 'pointer', color: C.muted }}>
-                Cancel
-              </button>
-              <button onClick={() => onDelete(getId(entry))} disabled={saving}
-                style={{ flex: 1, background: '#D85A30', color: '#fff', border: 'none', borderRadius: 8, padding: 11, ...sans, fontSize: 14, fontWeight: 500, cursor: 'pointer', opacity: saving ? 0.6 : 1 }}>
-                {saving ? 'Deleting…' : 'Yes, delete'}
-              </button>
+            <div style={{ display:'flex', gap:16, fontSize:12, color:C.green700 }}>
+              <span>Cost: <strong>{fmt(mInputCost)}</strong></span>
+              <span>Market Value: <strong>{fmt(mInputMktVal)}</strong></span>
+              <span>Savings: <strong>{fmt(mSavings)}</strong></span>
             </div>
           </div>
         )}
       </div>
-    </div>
-  );
-}
 
-// ── ADD FORM (inline) ─────────────────────────────────────────────────────────
-function ExpenseForm({ title, values: v, crops, saving, onChange, onSave, onCancel }) {
-  const set = (k, val) => onChange(p => ({ ...p, [k]: val }));
-  return (
-    <div style={{ background: C.surface, border: `0.5px solid ${C.borderSt}`, borderRadius: 12, padding: '14px', marginBottom: 14 }}>
-      <div style={{ ...serif, fontSize: 14, color: C.green800, marginBottom: 14 }}>{title}</div>
-
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
-        <FormField label="Amount (₹)">
-          <input style={inp} type="number" inputMode="numeric" placeholder="0" value={v.amount}
-            onChange={e => set('amount', e.target.value)} autoFocus />
-        </FormField>
-        <FormField label="Date">
-          <input style={inp} type="date" value={v.date} onChange={e => set('date', e.target.value)} />
-        </FormField>
-      </div>
-
-      <FormField label="Description" mb={10}>
-        <input style={inp} placeholder="What was this for?" value={v.desc} onChange={e => set('desc', e.target.value)} />
-      </FormField>
-
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
-        <FormField label="Category">
-          <select style={inp} value={v.category} onChange={e => set('category', e.target.value)}>
-            {CATS.map(c => <option key={c}>{c}</option>)}
-          </select>
-        </FormField>
-        <FormField label="Crop">
-          <select style={inp} value={v.cropId} onChange={e => set('cropId', e.target.value)}>
-            <option value="">— None —</option>
-            {crops.map(c => <option key={getId(c)} value={getId(c)}>{c.name}</option>)}
-          </select>
-        </FormField>
-      </div>
-
-      <FormField label="Notes (optional)" mb={14}>
-        <input style={inp} placeholder="Any additional notes…" value={v.notes} onChange={e => set('notes', e.target.value)} />
-      </FormField>
-
-      <div style={{ display: 'flex', gap: 8 }}>
-        <button onClick={onSave} disabled={saving}
-          style={{ flex: 1, background: C.green700, color: '#fff', border: 'none', borderRadius: 8, padding: 11, ...sans, fontSize: 14, fontWeight: 500, cursor: 'pointer', opacity: saving ? 0.6 : 1 }}>
-          {saving ? 'Saving…' : 'Save'}
-        </button>
-        <button onClick={onCancel}
-          style={{ background: 'none', border: `0.5px solid ${C.borderSt}`, borderRadius: 8, padding: '11px 16px', ...sans, fontSize: 14, cursor: 'pointer', color: C.muted }}>
-          Cancel
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ── SHARED STYLES & COMPONENTS ────────────────────────────────────────────────
-const serif = { fontFamily: "'Libre Baskerville', serif" };
-const sans  = { fontFamily: "'DM Sans', sans-serif" };
-
-const inp = {
-  width: '100%', border: `0.5px solid rgba(44,44,42,0.22)`, borderRadius: 8,
-  padding: '9px 12px', fontFamily: "'DM Sans', sans-serif", fontSize: 14,
-  background: '#F7F5F0', color: '#2C2C2A', outline: 'none', WebkitAppearance: 'none',
-  boxSizing: 'border-box',
-};
-
-const filterSel = {
-  border: `0.5px solid rgba(44,44,42,0.18)`, borderRadius: 8,
-  padding: '8px 10px', fontFamily: "'DM Sans', sans-serif", fontSize: 12,
-  background: '#fff', color: '#5F5E5A', cursor: 'pointer', outline: 'none',
-  WebkitAppearance: 'none',
-};
-
-function CropTab({ label, sub, active, onClick }) {
-  return (
-    <button onClick={onClick} style={{
-      flexShrink: 0, background: active ? '#F7F5F0' : 'none', border: 'none',
-      color: active ? C.green800 : C.green200, fontFamily: "'DM Sans', sans-serif",
-      fontSize: 13, fontWeight: active ? 500 : 400, padding: '8px 14px 10px',
-      cursor: 'pointer', borderRadius: '6px 6px 0 0', opacity: active ? 1 : 0.75,
-    }}>
-      {label}
-      {sub && <span style={{ fontSize: 10, display: 'block', marginTop: 1, opacity: 0.7 }}>{sub}</span>}
-    </button>
-  );
-}
-
-function StatCard({ label, value, accent }) {
-  return (
-    <div style={{ background: '#fff', border: '0.5px solid rgba(44,44,42,0.12)', borderRadius: 10, padding: '10px 12px' }}>
-      <div style={{ fontSize: 10, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 3 }}>{label}</div>
-      <div style={{ fontSize: 15, fontWeight: 500, color: accent ? C.green700 : C.text }}>{value}</div>
-    </div>
-  );
-}
-
-function FormField({ label, children, mb = 0 }) {
-  return (
-    <div style={{ marginBottom: mb }}>
-      <label style={{ display: 'block', fontSize: 11, fontWeight: 500, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 5 }}>{label}</label>
-      {children}
-    </div>
-  );
-}
-
-function Pill({ label, color, onRemove }) {
-  return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 500, padding: '3px 8px 3px 10px', borderRadius: 999, background: color ? color + '18' : C.green50, color: color || C.green700, border: `0.5px solid ${color || C.green400}44` }}>
-      {label}
-      <button onClick={onRemove} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', fontSize: 13, lineHeight: 1, padding: 0, opacity: 0.6 }}>×</button>
-    </span>
-  );
-}
-
-// No X button — the whole card is tappable
-function EntryCard({ entry: e, showCrop, cropName, onTap }) {
-  return (
-    <div
-      onClick={onTap}
-      style={{
-        background: '#fff', border: `0.5px solid rgba(44,44,42,0.12)`, borderRadius: 10,
-        padding: '11px 12px', display: 'flex', alignItems: 'flex-start', gap: 10,
-        cursor: 'pointer', transition: 'background 0.12s',
-      }}
-      onMouseEnter={e => e.currentTarget.style.background = '#f5f3ee'}
-      onMouseLeave={e => e.currentTarget.style.background = '#fff'}
-    >
-      <div style={{ width: 8, height: 8, borderRadius: '50%', background: CAT_COLORS[e.category] || C.gray400, flexShrink: 0, marginTop: 5 }} />
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 14, fontWeight: 500, color: C.text, marginBottom: 2 }}>{e.desc || '—'}</div>
-        <div style={{ display: 'flex', gap: 8, fontSize: 11, color: C.muted, flexWrap: 'wrap' }}>
-          <span>{fmtDate(e.date)}</span>
-          <span style={{ background: C.gray50, padding: '1px 6px', borderRadius: 4 }}>{e.category}</span>
-          {showCrop && cropName !== '—' && <span style={{ color: C.green600 }}>{cropName}</span>}
-          {e.notes && <span style={{ opacity: 0.7 }}>{e.notes}</span>}
+      {/* By crop */}
+      {cropBreakdown.length > 0 && (
+        <div style={{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:14, marginBottom:14 }}>
+          <div style={{ ...serif, fontSize:13, color:C.muted, marginBottom:12 }}>By Crop</div>
+          {cropBreakdown.map(({ crop, exp, inc, sav, net }) => (
+            <div key={getId(crop)} style={{ paddingBottom:10, marginBottom:10, borderBottom:`0.5px solid ${C.gray50}` }}>
+              <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:6 }}>
+                <span style={{ fontWeight:600, fontSize:14, color:C.text }}>{crop.name}</span>
+                <span style={{ fontSize:13, fontWeight:600, color: net>=0?C.teal400:C.coral400 }}>{fmt(net)}</span>
+              </div>
+              <div style={{ display:'flex', gap:12, fontSize:11, color:C.muted }}>
+                <span>Spent: <strong style={{color:C.coral400}}>{fmt(exp)}</strong></span>
+                <span>Income: <strong style={{color:C.teal400}}>{fmt(inc)}</strong></span>
+                {sav>0 && <span>Saved: <strong style={{color:C.green600}}>{fmt(sav)}</strong></span>}
+              </div>
+            </div>
+          ))}
         </div>
-      </div>
-      <div style={{ fontSize: 14, fontWeight: 600, color: C.text, flexShrink: 0 }}>{fmt(e.amount)}</div>
+      )}
+
+      {/* Expense breakdown by category */}
+      {db.expenses.length > 0 && <ExpBreakdown expenses={db.expenses} />}
+
+      {/* Inputs used per crop */}
+      {db.inputs.length > 0 && (
+        <div style={{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:14, marginBottom:14 }}>
+          <div style={{ ...serif, fontSize:13, color:C.muted, marginBottom:12 }}>Organic Inputs by Crop</div>
+          {db.crops.filter(c => db.inputs.some(i => (i.cropId?._id||i.cropId)===getId(c))).map(c => {
+            const cropInputs = db.inputs.filter(i => (i.cropId?._id||i.cropId)===getId(c));
+            return (
+              <div key={getId(c)} style={{ marginBottom:10 }}>
+                <div style={{ fontSize:13, fontWeight:600, color:C.text, marginBottom:4 }}>{c.name}</div>
+                <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
+                  {cropInputs.map(i => (
+                    <span key={getId(i)} style={{ fontSize:11, background:C.green50, color:C.green700, border:`0.5px solid ${C.green100}`, padding:'2px 8px', borderRadius:999 }}>
+                      {i.type} — {i.quantity} {i.marketValue>0?`(saved ${fmt(i.marketValue)})`:''} 
+                    </span>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
 
+function ExpBreakdown({ expenses }) {
+  const totals = {};
+  EXP_CATS.forEach(c => totals[c] = 0);
+  expenses.forEach(e => { if (totals[e.category]!==undefined) totals[e.category]+=Number(e.amount); });
+  const rows = EXP_CATS.filter(c => totals[c]>0).sort((a,b)=>totals[b]-totals[a]);
+  const max  = Math.max(...rows.map(c=>totals[c]),1);
+  return (
+    <div style={{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:14, marginBottom:14 }}>
+      <div style={{ ...serif, fontSize:13, color:C.muted, marginBottom:12 }}>Expense Breakdown</div>
+      {rows.map(c => (
+        <div key={c} style={{ marginBottom:10 }}>
+          <div style={{ display:'flex', justifyContent:'space-between', marginBottom:4 }}>
+            <span style={{ fontSize:12, color:C.gray700 }}>{c}</span>
+            <span style={{ fontSize:12, fontWeight:500, color:EXP_CAT_COLORS[c] }}>{fmt(totals[c])}</span>
+          </div>
+          <div style={{ height:5, background:C.gray50, borderRadius:3, overflow:'hidden' }}>
+            <div style={{ height:'100%', borderRadius:3, background:EXP_CAT_COLORS[c], width:`${Math.round(totals[c]/max*100)}%`, transition:'width 0.4s' }} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── LIST TAB (Expenses / Income) ──────────────────────────────────────────────
+function ListTab({ collection, type, db, cropName, onTap }) {
+  const [month, setMonth]   = useState('');
+  const [catF,  setCatF]    = useState('');
+  const [page,  setPage]    = useState(1);
+
+  const byMonth = month ? collection.filter(e => monthKey(e.date)===month) : collection;
+  const byCat   = catF  ? byMonth.filter(e => (e.category||e.source)===catF) : byMonth;
+  const sorted  = [...byCat].sort((a,b) => new Date(b.date)-new Date(a.date));
+  const visible = sorted.slice(0, page*PAGE);
+  const months  = buildMonths(collection);
+  const total   = byMonth.reduce((s,e)=>s+Number(e.amount),0);
+
+  const cats = type==='expense' ? EXP_CATS : INCOME_SOURCES;
+  const colors = type==='expense' ? EXP_CAT_COLORS : {};
+
+  return (
+    <div>
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:8, marginBottom:12 }}>
+        <StatCard label="Total"    value={fmt(total)}           accent={type==='income'} />
+        <StatCard label="Entries"  value={byMonth.length} />
+        <StatCard label="Showing"  value={`${visible.length}/${sorted.length}`} />
+      </div>
+
+      <div style={{ display:'flex', gap:8, marginBottom:10 }}>
+        <select style={{ ...fsel, flex:1 }} value={month} onChange={e => { setMonth(e.target.value); setPage(1); }}>
+          <option value="">All months</option>
+          {months.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
+        </select>
+        <select style={{ ...fsel, flex:1 }} value={catF} onChange={e => { setCatF(e.target.value); setPage(1); }}>
+          <option value="">All {type==='expense'?'categories':'sources'}</option>
+          {cats.map(c => <option key={c}>{c}</option>)}
+        </select>
+      </div>
+
+      {sorted.length === 0
+        ? <Center>No {type} entries yet.</Center>
+        : <>
+            <div style={{ display:'flex', flexDirection:'column', gap:6, marginBottom:12 }}>
+              {visible.map(e => (
+                <Card key={getId(e)} onClick={() => onTap({ type, data:e })}>
+                  <div style={{ width:8, height:8, borderRadius:'50%', background: colors[e.category||e.source]||C.teal400, flexShrink:0, marginTop:5 }} />
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ fontSize:14, fontWeight:500, color:C.text, marginBottom:2 }}>{e.desc||e.source||'—'}</div>
+                    <div style={{ display:'flex', gap:8, fontSize:11, color:C.muted, flexWrap:'wrap' }}>
+                      <span>{fmtDate(e.date)}</span>
+                      <Tag>{e.category||e.source}</Tag>
+                      {cropName(e.cropId)!=='—' && <span style={{ color:C.green600 }}>{cropName(e.cropId)}</span>}
+                      {e.qty  && <span>{e.qty}</span>}
+                      {e.notes && <span style={{ opacity:0.7 }}>{e.notes}</span>}
+                    </div>
+                  </div>
+                  <div style={{ fontSize:14, fontWeight:600, color: type==='income'?C.teal400:C.text, flexShrink:0 }}>{fmt(e.amount)}</div>
+                </Card>
+              ))}
+            </div>
+            {visible.length < sorted.length
+              ? <LoadMore remaining={sorted.length-visible.length} onLoad={() => setPage(p=>p+1)} />
+              : sorted.length > PAGE && <AllShown count={sorted.length} />
+            }
+          </>
+      }
+    </div>
+  );
+}
+
+// ── INPUTS TAB ────────────────────────────────────────────────────────────────
+function InputsTab({ db, cropName, onTap }) {
+  const [page, setPage] = useState(1);
+  const sorted  = [...db.inputs].sort((a,b) => new Date(b.date)-new Date(a.date));
+  const visible = sorted.slice(0, page*PAGE);
+  const totalSaved = db.inputs.reduce((s,i)=>s+Number(i.marketValue||0)-Number(i.costMade||0), 0);
+  const totalCost  = db.inputs.reduce((s,i)=>s+Number(i.costMade||0), 0);
+
+  return (
+    <div>
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:12 }}>
+        <StatCard label="Total Cost"    value={fmt(totalCost)}  />
+        <StatCard label="Total Savings" value={fmt(totalSaved)} accent />
+        <StatCard label="Batches"       value={db.inputs.length} />
+        <StatCard label="Showing"       value={`${visible.length}/${sorted.length}`} />
+      </div>
+
+      {sorted.length === 0
+        ? <Center>No inputs logged yet.{'\n'}Log organic inputs you prepare on-farm.</Center>
+        : <>
+            <div style={{ display:'flex', flexDirection:'column', gap:6, marginBottom:12 }}>
+              {visible.map(i => {
+                const saved = Number(i.marketValue||0) - Number(i.costMade||0);
+                return (
+                  <Card key={getId(i)} onClick={() => onTap({ type:'input', data:i })}>
+                    <div style={{ width:8, height:8, borderRadius:'50%', background:C.green600, flexShrink:0, marginTop:5 }} />
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <div style={{ fontSize:14, fontWeight:500, color:C.text, marginBottom:2 }}>{i.type}</div>
+                      <div style={{ display:'flex', gap:8, fontSize:11, color:C.muted, flexWrap:'wrap' }}>
+                        <span>{fmtDate(i.date)}</span>
+                        <Tag>{i.quantity}</Tag>
+                        {cropName(i.cropId)!=='—' && <span style={{ color:C.green600 }}>{cropName(i.cropId)}</span>}
+                        {saved>0 && <span style={{ color:C.green600, fontWeight:500 }}>saved {fmt(saved)}</span>}
+                        {i.notes && <span style={{ opacity:0.7 }}>{i.notes}</span>}
+                      </div>
+                    </div>
+                    <div style={{ textAlign:'right', flexShrink:0 }}>
+                      {i.costMade > 0 && <div style={{ fontSize:12, color:C.coral400 }}>{fmt(i.costMade)}</div>}
+                      {i.marketValue > 0 && <div style={{ fontSize:11, color:C.green600 }}>≈{fmt(i.marketValue)}</div>}
+                    </div>
+                  </Card>
+                );
+              })}
+            </div>
+            {visible.length < sorted.length
+              ? <LoadMore remaining={sorted.length-visible.length} onLoad={() => setPage(p=>p+1)} />
+              : sorted.length > PAGE && <AllShown count={sorted.length} />
+            }
+          </>
+      }
+    </div>
+  );
+}
+
+// ── CROPS TAB ─────────────────────────────────────────────────────────────────
+function CropsTab({ db, saving, run }) {
+  return (
+    <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+      {db.crops.length === 0 && <Center>No crops yet. Tap the button below to add one.</Center>}
+      {db.crops.map(c => {
+        const id  = getId(c);
+        const exp = db.expenses.filter(e=>(e.cropId?._id||e.cropId)===id).reduce((s,e)=>s+Number(e.amount),0);
+        const inc = db.income.filter(i  =>(i.cropId?._id||i.cropId)===id).reduce((s,i)=>s+Number(i.amount),0);
+        const si  = STAGES.indexOf(c.stage);
+        return (
+          <div key={id} style={{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:14 }}>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start' }}>
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ fontWeight:700, fontSize:15, color:C.text }}>{c.name}</div>
+                <div style={{ fontSize:11, color:C.muted, marginTop:2 }}>{c.season}{c.sowDate?` · Sown: ${fmtDate(c.sowDate)}`:''}</div>
+                {/* Stage progress */}
+                <div style={{ position:'relative', display:'flex', justifyContent:'space-between', alignItems:'center', margin:'10px 0 6px', padding:'0 2px' }}>
+                  <div style={{ position:'absolute', left:2, right:2, height:3, background:C.gray50, borderRadius:2 }} />
+                  <div style={{ position:'absolute', left:2, height:3, borderRadius:2, background:C.green600, width:`${(si/(STAGES.length-1))*100}%`, transition:'width 0.4s' }} />
+                  {STAGES.map((_,i) => (
+                    <div key={i} style={{ width:10, height:10, borderRadius:'50%', zIndex:2, background:i<=si?C.green600:C.gray50, border:`2px solid ${i<=si?C.green600:C.gray100}` }} />
+                  ))}
+                </div>
+                <div style={{ display:'flex', gap:4, flexWrap:'wrap', marginTop:4 }}>
+                  {STAGES.map((s,i) => (
+                    <button key={s} onClick={() => run(()=>db.updateCrop(id,{stage:s}), `Stage → ${s}`)}
+                      style={{ fontSize:9, padding:'2px 7px', borderRadius:999, border:`1px solid ${i===si?C.green600:C.gray100}`, background:i===si?C.green700:'transparent', color:i===si?'#fff':C.gray400, cursor:'pointer', ...sans }}>
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div style={{ textAlign:'right', flexShrink:0, marginLeft:10 }}>
+                <div style={{ fontSize:12, color:C.coral400 }}>Spent: {fmt(exp)}</div>
+                <div style={{ fontSize:12, color:C.teal400, marginTop:2 }}>Income: {fmt(inc)}</div>
+                <button onClick={() => run(()=>db.deleteCrop(id), 'Crop removed')}
+                  style={{ marginTop:8, fontSize:11, color:C.coral400, background:'none', border:'none', cursor:'pointer', padding:0 }}>
+                  Remove
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── EDIT SHEET ────────────────────────────────────────────────────────────────
+function EditSheet({ item, crops, saving, onUpdate, onDelete, onClose }) {
+  const { type, data } = item;
+  const [v, setV]       = useState({ ...data, cropId: data.cropId?._id||data.cropId||'' });
+  const [confirm, setConfirm] = useState(false);
+  const set = (k, val) => setV(p => ({ ...p, [k]: val }));
+
+  return (
+    <Sheet title={`Edit ${type.charAt(0).toUpperCase()+type.slice(1)}`} onClose={onClose}>
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:10 }}>
+        <FF label="Amount (₹)">
+          <input style={inp} type="number" inputMode="numeric" value={v.amount||''} onChange={e=>set('amount',e.target.value)} />
+        </FF>
+        <FF label="Date">
+          <input style={inp} type="date" value={v.date||''} onChange={e=>set('date',e.target.value)} />
+        </FF>
+      </div>
+
+      {type==='expense' && <>
+        <FF label="Description" mb={10}>
+          <input style={inp} value={v.desc||''} onChange={e=>set('desc',e.target.value)} />
+        </FF>
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:10 }}>
+          <FF label="Category">
+            <select style={inp} value={v.category||''} onChange={e=>set('category',e.target.value)}>
+              {EXP_CATS.map(c=><option key={c}>{c}</option>)}
+            </select>
+          </FF>
+          <FF label="Crop">
+            <select style={inp} value={v.cropId||''} onChange={e=>set('cropId',e.target.value)}>
+              <option value="">— None —</option>
+              {crops.map(c=><option key={getId(c)} value={getId(c)}>{c.name}</option>)}
+            </select>
+          </FF>
+        </div>
+      </>}
+
+      {type==='income' && <>
+        <FF label="Source" mb={10}>
+          <select style={inp} value={v.source||''} onChange={e=>set('source',e.target.value)}>
+            {INCOME_SOURCES.map(s=><option key={s}>{s}</option>)}
+          </select>
+        </FF>
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:10 }}>
+          <FF label="Quantity"><input style={inp} value={v.qty||''} onChange={e=>set('qty',e.target.value)} placeholder="e.g. 10 bags" /></FF>
+          <FF label="Crop">
+            <select style={inp} value={v.cropId||''} onChange={e=>set('cropId',e.target.value)}>
+              <option value="">— None —</option>
+              {crops.map(c=><option key={getId(c)} value={getId(c)}>{c.name}</option>)}
+            </select>
+          </FF>
+        </div>
+      </>}
+
+      {type==='input' && <>
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:10 }}>
+          <FF label="Type">
+            <select style={inp} value={v.type||''} onChange={e=>set('type',e.target.value)}>
+              {INPUT_TYPES.map(t=><option key={t}>{t}</option>)}
+            </select>
+          </FF>
+          <FF label="Quantity"><input style={inp} value={v.quantity||''} onChange={e=>set('quantity',e.target.value)} /></FF>
+        </div>
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:10 }}>
+          <FF label="Cost Made (₹)"><input style={inp} type="number" value={v.costMade||''} onChange={e=>set('costMade',e.target.value)} /></FF>
+          <FF label="Market Value (₹)"><input style={inp} type="number" value={v.marketValue||''} onChange={e=>set('marketValue',e.target.value)} /></FF>
+        </div>
+        <FF label="Crop" mb={10}>
+          <select style={inp} value={v.cropId||''} onChange={e=>set('cropId',e.target.value)}>
+            <option value="">— None —</option>
+            {crops.map(c=><option key={getId(c)} value={getId(c)}>{c.name}</option>)}
+          </select>
+        </FF>
+      </>}
+
+      <FF label="Notes" mb={18}>
+        <input style={inp} value={v.notes||''} placeholder="Optional notes…" onChange={e=>set('notes',e.target.value)} />
+      </FF>
+
+      <button onClick={() => onUpdate(getId(data), { ...v, amount:Number(v.amount||0), costMade:Number(v.costMade||0), marketValue:Number(v.marketValue||0), cropId:v.cropId||null })}
+        disabled={saving}
+        style={{ width:'100%', background:C.green700, color:'#fff', border:'none', borderRadius:10, padding:13, ...sans, fontSize:14, fontWeight:500, cursor:'pointer', marginBottom:10, opacity:saving?0.6:1 }}>
+        {saving?'Saving…':'Save Changes'}
+      </button>
+
+      {!confirm
+        ? <button onClick={()=>setConfirm(true)} style={{ width:'100%', background:'none', border:`0.5px solid ${C.coral400}44`, borderRadius:10, padding:13, ...sans, fontSize:14, color:C.coral400, cursor:'pointer' }}>Delete Entry</button>
+        : <div style={{ background:C.coral50, border:`0.5px solid ${C.coral400}66`, borderRadius:10, padding:14 }}>
+            <div style={{ fontSize:13, color:C.muted, marginBottom:12, textAlign:'center' }}>Are you sure? This cannot be undone.</div>
+            <div style={{ display:'flex', gap:8 }}>
+              <button onClick={()=>setConfirm(false)} style={{ flex:1, background:'none', border:`0.5px solid ${C.borderSt}`, borderRadius:8, padding:11, ...sans, fontSize:14, cursor:'pointer', color:C.muted }}>Cancel</button>
+              <button onClick={()=>onDelete(getId(data))} disabled={saving} style={{ flex:1, background:C.coral400, color:'#fff', border:'none', borderRadius:8, padding:11, ...sans, fontSize:14, fontWeight:500, cursor:'pointer', opacity:saving?0.6:1 }}>{saving?'Deleting…':'Yes, delete'}</button>
+            </div>
+          </div>
+      }
+    </Sheet>
+  );
+}
+
+// ── ADD FORMS ─────────────────────────────────────────────────────────────────
+function ExpenseForm({ crops, saving, onSave }) {
+  const [v, setV] = useState({ amount:'', desc:'', date:today(), category:EXP_CATS[0], notes:'', cropId:'' });
+  const set = (k,val) => setV(p=>({...p,[k]:val}));
+  return (
+    <div>
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:10 }}>
+        <FF label="Amount (₹)"><input style={inp} type="number" inputMode="numeric" placeholder="0" value={v.amount} onChange={e=>set('amount',e.target.value)} autoFocus /></FF>
+        <FF label="Date"><input style={inp} type="date" value={v.date} onChange={e=>set('date',e.target.value)} /></FF>
+      </div>
+      <FF label="Description" mb={10}><input style={inp} placeholder="What was this for?" value={v.desc} onChange={e=>set('desc',e.target.value)} /></FF>
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:10 }}>
+        <FF label="Category"><select style={inp} value={v.category} onChange={e=>set('category',e.target.value)}>{EXP_CATS.map(c=><option key={c}>{c}</option>)}</select></FF>
+        <FF label="Crop"><select style={inp} value={v.cropId} onChange={e=>set('cropId',e.target.value)}><option value="">— None —</option>{crops.map(c=><option key={getId(c)} value={getId(c)}>{c.name}</option>)}</select></FF>
+      </div>
+      <FF label="Notes (optional)" mb={16}><input style={inp} placeholder="…" value={v.notes} onChange={e=>set('notes',e.target.value)} /></FF>
+      <button onClick={() => { if(!v.amount||!v.desc.trim()) return; onSave({...v,amount:Number(v.amount),cropId:v.cropId||null}); }} disabled={saving}
+        style={{ width:'100%', background:C.green700, color:'#fff', border:'none', borderRadius:10, padding:13, ...sans, fontSize:14, fontWeight:500, cursor:'pointer', opacity:saving?0.6:1 }}>
+        {saving?'Saving…':'Save Expense'}
+      </button>
+    </div>
+  );
+}
+
+function IncomeForm({ crops, saving, onSave }) {
+  const [v, setV] = useState({ amount:'', source:INCOME_SOURCES[0], date:today(), qty:'', notes:'', cropId:'' });
+  const set = (k,val) => setV(p=>({...p,[k]:val}));
+  return (
+    <div>
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:10 }}>
+        <FF label="Amount (₹)"><input style={inp} type="number" inputMode="numeric" placeholder="0" value={v.amount} onChange={e=>set('amount',e.target.value)} autoFocus /></FF>
+        <FF label="Date"><input style={inp} type="date" value={v.date} onChange={e=>set('date',e.target.value)} /></FF>
+      </div>
+      <FF label="Source" mb={10}><select style={inp} value={v.source} onChange={e=>set('source',e.target.value)}>{INCOME_SOURCES.map(s=><option key={s}>{s}</option>)}</select></FF>
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:10 }}>
+        <FF label="Quantity / Detail"><input style={inp} placeholder="e.g. 10 bags" value={v.qty} onChange={e=>set('qty',e.target.value)} /></FF>
+        <FF label="Crop"><select style={inp} value={v.cropId} onChange={e=>set('cropId',e.target.value)}><option value="">— None —</option>{crops.map(c=><option key={getId(c)} value={getId(c)}>{c.name}</option>)}</select></FF>
+      </div>
+      <FF label="Notes (optional)" mb={16}><input style={inp} placeholder="…" value={v.notes} onChange={e=>set('notes',e.target.value)} /></FF>
+      <button onClick={() => { if(!v.amount) return; onSave({...v,amount:Number(v.amount),cropId:v.cropId||null}); }} disabled={saving}
+        style={{ width:'100%', background:C.teal400, color:'#fff', border:'none', borderRadius:10, padding:13, ...sans, fontSize:14, fontWeight:500, cursor:'pointer', opacity:saving?0.6:1 }}>
+        {saving?'Saving…':'Record Income'}
+      </button>
+    </div>
+  );
+}
+
+function InputForm({ crops, saving, onSave }) {
+  const [v, setV] = useState({ type:INPUT_TYPES[0], quantity:'', date:today(), costMade:'', marketValue:'', notes:'', cropId:'' });
+  const set = (k,val) => setV(p=>({...p,[k]:val}));
+  const autoVal = INPUT_MARKET_RATE[v.type] || 0;
+  return (
+    <div>
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:10 }}>
+        <FF label="Input Type"><select style={inp} value={v.type} onChange={e=>set('type',e.target.value)} autoFocus>{INPUT_TYPES.map(t=><option key={t}>{t}</option>)}</select></FF>
+        <FF label="Quantity"><input style={inp} placeholder="e.g. 10 litres" value={v.quantity} onChange={e=>set('quantity',e.target.value)} /></FF>
+      </div>
+      <FF label="Date" mb={10}><input style={inp} type="date" value={v.date} onChange={e=>set('date',e.target.value)} /></FF>
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:10 }}>
+        <FF label="Cost to Make (₹)"><input style={inp} type="number" inputMode="numeric" placeholder="0" value={v.costMade} onChange={e=>set('costMade',e.target.value)} /></FF>
+        <FF label="Market Value (₹)">
+          <input style={inp} type="number" inputMode="numeric" placeholder={autoVal>0?`≈${autoVal}/unit`:'0'} value={v.marketValue} onChange={e=>set('marketValue',e.target.value)} />
+        </FF>
+      </div>
+      {autoVal > 0 && (
+        <div style={{ fontSize:11, color:C.green700, background:C.green50, borderRadius:7, padding:'6px 10px', marginBottom:10 }}>
+          💡 Market rate for {v.type} ≈ ₹{autoVal}/unit
+        </div>
+      )}
+      <FF label="Crop" mb={10}><select style={inp} value={v.cropId} onChange={e=>set('cropId',e.target.value)}><option value="">— None —</option>{crops.map(c=><option key={getId(c)} value={getId(c)}>{c.name}</option>)}</select></FF>
+      <FF label="Notes (optional)" mb={16}><input style={inp} placeholder="Ingredients, method…" value={v.notes} onChange={e=>set('notes',e.target.value)} /></FF>
+      <button onClick={() => { if(!v.quantity) return; onSave({...v,costMade:Number(v.costMade||0),marketValue:Number(v.marketValue||0),cropId:v.cropId||null}); }} disabled={saving}
+        style={{ width:'100%', background:C.green700, color:'#fff', border:'none', borderRadius:10, padding:13, ...sans, fontSize:14, fontWeight:500, cursor:'pointer', opacity:saving?0.6:1 }}>
+        {saving?'Saving…':'Log Input'}
+      </button>
+    </div>
+  );
+}
+
+function CropForm({ saving, onSave }) {
+  const [v, setV] = useState({ name:'', season:SEASONS[0], stage:'Sowing', sowDate:'' });
+  const set = (k,val) => setV(p=>({...p,[k]:val}));
+  return (
+    <div>
+      <FF label="Crop Name" mb={10}><input style={inp} placeholder="e.g. Paddy" value={v.name} onChange={e=>set('name',e.target.value)} autoFocus /></FF>
+      <FF label="Season" mb={10}><select style={inp} value={v.season} onChange={e=>set('season',e.target.value)}>{SEASONS.map(s=><option key={s}>{s}</option>)}</select></FF>
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:16 }}>
+        <FF label="Stage"><select style={inp} value={v.stage} onChange={e=>set('stage',e.target.value)}>{STAGES.map(s=><option key={s}>{s}</option>)}</select></FF>
+        <FF label="Sow Date"><input style={inp} type="date" value={v.sowDate} onChange={e=>set('sowDate',e.target.value)} /></FF>
+      </div>
+      <button onClick={() => { if(!v.name.trim()) return; onSave(v); }} disabled={saving}
+        style={{ width:'100%', background:C.green700, color:'#fff', border:'none', borderRadius:10, padding:13, ...sans, fontSize:14, fontWeight:500, cursor:'pointer', opacity:saving?0.6:1 }}>
+        {saving?'Saving…':'Add Crop'}
+      </button>
+    </div>
+  );
+}
+
+// ── SMALL SHARED COMPONENTS ───────────────────────────────────────────────────
 function Sheet({ title, onClose, children }) {
   return (
-    <div style={{ position: 'fixed', inset: 0, background: '#00000055', zIndex: 200, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}
-      onClick={e => e.target === e.currentTarget && onClose()}>
-      <div style={{ background: C.bg, borderRadius: '20px 20px 0 0', width: '100%', maxWidth: 480, maxHeight: '88vh', overflowY: 'auto', padding: '20px 16px 32px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-          <div style={{ ...serif, fontSize: 15, color: C.green800 }}>{title}</div>
-          <button onClick={onClose} style={{ background: C.gray50, border: 'none', borderRadius: 8, width: 30, height: 30, cursor: 'pointer', fontSize: 16, color: C.muted }}>✕</button>
+    <div style={{ position:'fixed', inset:0, background:'#00000055', zIndex:200, display:'flex', alignItems:'flex-end', justifyContent:'center' }}
+      onClick={e => e.target===e.currentTarget && onClose()}>
+      <div style={{ background:C.bg, borderRadius:'20px 20px 0 0', width:'100%', maxWidth:480, maxHeight:'92vh', overflowY:'auto', padding:'20px 16px 36px' }}>
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:18 }}>
+          <div style={{ ...serif, fontSize:15, color:C.green800 }}>{title}</div>
+          <button onClick={onClose} style={{ background:C.gray50, border:'none', borderRadius:8, width:30, height:30, cursor:'pointer', fontSize:16, color:C.muted }}>✕</button>
         </div>
         {children}
       </div>
@@ -653,25 +697,78 @@ function Sheet({ title, onClose, children }) {
   );
 }
 
-function EmptyState() {
+function Card({ onClick, children }) {
   return (
-    <div style={{ textAlign: 'center', padding: '40px 20px', color: C.muted }}>
-      <div style={{ fontSize: 32, marginBottom: 10 }}>🌾</div>
-      <p style={{ fontSize: 14 }}>No entries yet.<br />Tap "+ Add Expense" to begin.</p>
+    <div onClick={onClick} style={{ background:'#fff', border:`0.5px solid ${C.border}`, borderRadius:10, padding:'11px 12px', display:'flex', alignItems:'flex-start', gap:10, cursor:'pointer', transition:'background 0.1s' }}
+      onMouseEnter={e=>e.currentTarget.style.background='#f5f3ee'}
+      onMouseLeave={e=>e.currentTarget.style.background='#fff'}>
+      {children}
     </div>
   );
 }
 
-function LoadingState() {
-  return <div style={{ textAlign: 'center', padding: '40px 20px', color: C.muted, fontSize: 14 }}>Loading…</div>;
+function StatCard({ label, value, accent }) {
+  return (
+    <div style={{ background:'#fff', border:`0.5px solid ${C.border}`, borderRadius:10, padding:'10px 12px' }}>
+      <div style={{ fontSize:10, color:C.muted, textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:3 }}>{label}</div>
+      <div style={{ fontSize:15, fontWeight:500, color: accent?C.teal400:C.text }}>{value}</div>
+    </div>
+  );
 }
 
-function ErrorState({ msg, onRetry }) {
+function KPICard({ label, value, color, bg }) {
   return (
-    <div style={{ background: '#FAECE7', border: '0.5px solid #D85A30', borderRadius: 10, padding: '14px', marginBottom: 14 }}>
-      <div style={{ color: '#D85A30', fontWeight: 600, fontSize: 13, marginBottom: 4 }}>Failed to load</div>
-      <div style={{ color: C.muted, fontSize: 12, marginBottom: 10 }}>{msg}</div>
-      <button onClick={onRetry} style={{ background: '#D85A30', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 14px', fontSize: 13, cursor: 'pointer' }}>Retry</button>
+    <div style={{ background:bg, border:`0.5px solid ${color}33`, borderRadius:12, padding:'12px 14px' }}>
+      <div style={{ fontSize:10, color:color, textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:4, opacity:0.8 }}>{label}</div>
+      <div style={{ fontSize:18, fontWeight:700, color }}>{value}</div>
+    </div>
+  );
+}
+
+function MiniStat({ label, value, color }) {
+  return (
+    <div>
+      <div style={{ fontSize:10, color:C.muted, textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:2 }}>{label}</div>
+      <div style={{ fontSize:14, fontWeight:600, color }}>{value}</div>
+    </div>
+  );
+}
+
+function FF({ label, children, mb=0 }) {
+  return (
+    <div style={{ marginBottom:mb }}>
+      <label style={{ display:'block', fontSize:11, fontWeight:500, color:C.muted, textTransform:'uppercase', letterSpacing:'0.06em', marginBottom:5 }}>{label}</label>
+      {children}
+    </div>
+  );
+}
+
+function Tag({ children }) {
+  return <span style={{ background:C.gray50, padding:'1px 6px', borderRadius:4 }}>{children}</span>;
+}
+
+function Center({ children }) {
+  return <div style={{ textAlign:'center', padding:'40px 20px', color:C.muted, fontSize:14, whiteSpace:'pre-line' }}>{children}</div>;
+}
+
+function LoadMore({ remaining, onLoad }) {
+  return (
+    <button onClick={onLoad} style={{ width:'100%', background:'none', border:`0.5px solid ${C.borderSt}`, borderRadius:10, padding:'11px', ...sans, fontSize:13, color:C.muted, cursor:'pointer', marginBottom:20 }}>
+      Load more · {remaining} remaining
+    </button>
+  );
+}
+
+function AllShown({ count }) {
+  return <div style={{ textAlign:'center', fontSize:11, color:C.gray200, marginBottom:20 }}>All {count} entries shown</div>;
+}
+
+function ErrState({ msg, onRetry }) {
+  return (
+    <div style={{ background:C.coral50, border:`0.5px solid ${C.coral400}`, borderRadius:10, padding:14, marginBottom:14 }}>
+      <div style={{ color:C.coral400, fontWeight:600, fontSize:13, marginBottom:4 }}>Failed to load</div>
+      <div style={{ color:C.muted, fontSize:12, marginBottom:10 }}>{msg}</div>
+      <button onClick={onRetry} style={{ background:C.coral400, color:'#fff', border:'none', borderRadius:8, padding:'8px 14px', fontSize:13, cursor:'pointer' }}>Retry</button>
     </div>
   );
 }

@@ -15,17 +15,16 @@ async function req(method, path, body) {
   return res.json();
 }
 
+const crud = (path) => ({
+  list:   ()       => req('GET',    `/${path}`),
+  create: (d)      => req('POST',   `/${path}`, d),
+  update: (id, d)  => req('PUT',    `/${path}/${id}`, d),
+  delete: (id)     => req('DELETE', `/${path}/${id}`),
+});
+
 export const api = {
-  expenses: {
-    list:   ()        => req('GET',    '/expenses'),
-    create: (d)       => req('POST',   '/expenses', d),
-    update: (id, d)   => req('PUT',    `/expenses/${id}`, d),
-    delete: (id)      => req('DELETE', `/expenses/${id}`),
-  },
-  crops: {
-    list:   ()        => req('GET',    '/crops'),
-    create: (d)       => req('POST',   '/crops', d),
-    update: (id, d)   => req('PUT',    `/crops/${id}`, d),
-    delete: (id)      => req('DELETE', `/crops/${id}`),
-  },
+  crops:    crud('crops'),
+  expenses: crud('expenses'),
+  income:   crud('income'),
+  inputs:   crud('inputs'),
 };
